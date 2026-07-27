@@ -1,4 +1,4 @@
-//! Minimal VRChat Web API client. The cookie is an app-owned session, never copied from VRCX.
+//! Minimal VRChat Web API client. Session cookies are app-owned (OS keyring).
 use anyhow::{bail, Result};
 use reqwest::{header, Client, RequestBuilder, Response, StatusCode};
 use rusqlite::{params, Connection};
@@ -16,6 +16,8 @@ const GALLERY_PAGE_SIZE: usize = 100;
 const MAX_GALLERY_PAGES: usize = 100;
 const PRINT_PAGE_SIZE: usize = 100;
 const MAX_PRINT_PAGES: usize = 100;
+const FRIEND_PAGE_SIZE: usize = 100;
+const MAX_FRIEND_PAGES: usize = 100;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +64,26 @@ pub struct Print {
 #[serde(rename_all = "camelCase")]
 pub struct PrintFiles {
     pub image: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitedFriend {
+    pub id: String,
+    pub display_name: String,
+    pub user_icon: Option<String>,
+    pub profile_pic_override: Option<String>,
+    pub current_avatar_thumbnail_image_url: Option<String>,
+    pub note: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FriendSyncResult {
+    pub total: usize,
+    pub newly_marked: usize,
+    pub unmarked: usize,
 }
 
 #[derive(Serialize)]
@@ -378,6 +400,101 @@ pub fn save_player(conn: &Connection, player: User) -> Result<()> {
     Ok(())
 }
 
+fn friend_profile_picture(friend: &LimitedFriend) -> Option<String> {
+    non_empty(friend.profile_pic_override.clone())
+        .or_else(|| non_empty(friend.user_icon.clone()))
+        .or_else(|| non_empty(friend.current_avatar_thumbnail_image_url.clone()))
+}
+
+fn friend_trust_level(friend: &LimitedFriend) -> String {
+    if friend.tags.iter().any(|tag| tag == "system_trust_veteran") {
+        "Trusted User"
+    } else if friend.tags.iter().any(|tag| tag == "system_trust_trusted") {
+        "Known User"
+    } else if friend.tags.iter().any(|tag| tag == "system_trust_known") {
+        "User"
+    } else if friend.tags.iter().any(|tag| tag == "system_trust_basic") {
+        "New User"
+    } else {
+        "Visitor"
+    }
+    .into()
+}
+
+fn save_limited_friend(conn: &Connection, friend: &LimitedFriend) -> Result<()> {
+    let picture = friend_profile_picture(friend);
+    let thumbnail = non_empty(friend.current_avatar_thumbnail_image_url.clone());
+    let trust = friend_trust_level(friend);
+    conn.execute(
+        "INSERT INTO players(user_id,display_name,profile_pic_url,avatar_thumbnail_url,trust_level,note,source,last_synced_at,is_vrchat_friend)
+         VALUES(?1,?2,?3,?4,?5,?6,'api',datetime('now'),1)
+         ON CONFLICT(user_id) DO UPDATE SET
+           display_name=excluded.display_name,
+           profile_pic_url=COALESCE(excluded.profile_pic_url,players.profile_pic_url),
+           avatar_thumbnail_url=COALESCE(excluded.avatar_thumbnail_url,players.avatar_thumbnail_url),
+           trust_level=excluded.trust_level,
+           note=excluded.note,
+           source='api',
+           last_synced_at=datetime('now'),
+           is_vrchat_friend=1",
+        params![
+            friend.id,
+            friend.display_name,
+            picture,
+            thumbnail,
+            trust,
+            friend.note
+        ],
+    )?;
+    Ok(())
+}
+
+fn friends_page_is_last(batch_len: usize) -> bool {
+    batch_len < FRIEND_PAGE_SIZE
+}
+
+/// Fetch online + offline friends, upsert profiles, and reconcile `is_vrchat_friend`.
+/// Does not modify curated `is_friend`.
+pub async fn sync_friends(conn: &Connection) -> Result<FriendSyncResult> {
+    let previous = crate::db::vrchat_friend_ids(conn)?;
+    let session = session(conn)?;
+    let mut seen = HashSet::new();
+    for offline in [false, true] {
+        let mut offset = 0;
+        for _ in 0..MAX_FRIEND_PAGES {
+            let response = send_with_retry(client(&session)?.get(format!(
+                "{BASE}/auth/user/friends?n={FRIEND_PAGE_SIZE}&offset={offset}&offline={offline}"
+            )))
+            .await?;
+            if response.status() == StatusCode::UNAUTHORIZED {
+                bail!("VRChat 登录已过期，请重新登录")
+            }
+            let friends: Vec<LimitedFriend> = response.error_for_status()?.json().await?;
+            let batch_len = friends.len();
+            if batch_len == 0 {
+                break;
+            }
+            for friend in friends {
+                if !seen.insert(friend.id.clone()) {
+                    continue;
+                }
+                save_limited_friend(conn, &friend)?;
+            }
+            if friends_page_is_last(batch_len) {
+                break;
+            }
+            offset += batch_len;
+            sleep(Duration::from_millis(350)).await;
+        }
+    }
+    let reconcile = crate::db::reconcile_vrchat_friends(conn, &seen)?;
+    Ok(FriendSyncResult {
+        total: reconcile.total,
+        newly_marked: seen.difference(&previous).count(),
+        unmarked: reconcile.unmarked,
+    })
+}
+
 pub async fn sync_own_gallery(conn: &Connection) -> Result<usize> {
     let own = current_user(conn).await?;
     let own_picture = profile_picture(&own);
@@ -475,16 +592,6 @@ pub async fn sync_own_gallery(conn: &Connection) -> Result<usize> {
                    source='vrchat_print',remote_url=excluded.remote_url,file_name=excluded.file_name,
                    captured_at=COALESCE(excluded.captured_at,photos.captured_at)",
                 params![own.id, print.id, image, name, captured_at],
-            )?;
-            let photo_id: i64 = conn.query_row(
-                "SELECT id FROM photos WHERE vrchat_file_id=?1 AND user_id=?2",
-                params![print.id, own.id],
-                |row| row.get(0),
-            )?;
-            conn.execute(
-                "INSERT OR IGNORE INTO photo_people(photo_id,user_id,source,confirmed)
-                 VALUES(?1,?2,'print-owner',1)",
-                params![photo_id, own.id],
             )?;
             count += 1;
         }
@@ -584,6 +691,32 @@ mod tests {
         assert!(should_retry(StatusCode::BAD_GATEWAY));
         assert!(!should_retry(StatusCode::UNAUTHORIZED));
         assert!(!should_retry(StatusCode::BAD_REQUEST));
+    }
+
+    #[test]
+    fn friends_page_stops_on_short_page() {
+        assert!(!friends_page_is_last(FRIEND_PAGE_SIZE));
+        assert!(friends_page_is_last(FRIEND_PAGE_SIZE - 1));
+    }
+
+    #[test]
+    fn limited_friend_json_maps_profile_fields() {
+        let friends: Vec<LimitedFriend> = serde_json::from_str(
+            r#"[{
+                "id":"usr_friend",
+                "displayName":"Friend",
+                "profilePicOverride":"https://example/override.png",
+                "userIcon":"https://example/icon.png",
+                "currentAvatarThumbnailImageUrl":"https://example/avatar.png",
+                "tags":["system_trust_trusted"]
+            }]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            friend_profile_picture(&friends[0]).as_deref(),
+            Some("https://example/override.png")
+        );
+        assert_eq!(friend_trust_level(&friends[0]), "Known User");
     }
 
     #[test]

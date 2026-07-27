@@ -18,6 +18,8 @@ pub struct Player {
     pub photo_count: i64,
     pub last_synced_at: Option<String>,
     pub is_friend: bool,
+    pub is_vrchat_friend: bool,
+    pub sort_order: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -40,10 +42,15 @@ pub struct Photo {
 pub struct AppSettings {
     pub album_folder: Option<String>,
     pub steam_screenshot_folder: Option<String>,
-    pub vrcx_database_path: Option<String>,
     pub sync_interval_minutes: i64,
     #[serde(default = "default_true")]
     pub show_self_in_friends: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct VrchatFriendReconcile {
+    pub total: usize,
+    pub unmarked: usize,
 }
 
 fn default_true() -> bool {
@@ -93,13 +100,63 @@ pub fn open(path: &Path) -> Result<Connection> {
     add_column_if_missing(&conn, "players", "note", "TEXT")?;
     add_column_if_missing(&conn, "players", "vrcx_memo", "TEXT")?;
     add_column_if_missing(&conn, "players", "is_friend", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(
+        &conn,
+        "players",
+        "is_vrchat_friend",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(&conn, "players", "sort_order", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(&conn, "photos", "kind", "TEXT NOT NULL DEFAULT 'album'")?;
+    migrate_friend_sort_order(&conn)?;
     conn.execute(
         "INSERT OR IGNORE INTO photo_people(photo_id,user_id,source,confirmed)
-         SELECT id,user_id,'legacy',1 FROM photos WHERE user_id IS NOT NULL",
+         SELECT id,user_id,'legacy',1 FROM photos
+         WHERE user_id IS NOT NULL AND source != 'vrchat_print'",
+        [],
+    )?;
+    // Prints are owned cloud files but should not auto-associate to self in photo_people.
+    conn.execute(
+        "DELETE FROM photo_people
+         WHERE source IN ('print-owner','legacy')
+           AND photo_id IN (SELECT id FROM photos WHERE source='vrchat_print')",
         [],
     )?;
     Ok(conn)
+}
+
+fn migrate_friend_sort_order(conn: &Connection) -> Result<()> {
+    let mut statement = conn.prepare(
+        "SELECT user_id FROM players
+         WHERE is_friend=1 AND sort_order=0
+         ORDER BY display_name COLLATE NOCASE, user_id",
+    )?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let max: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(sort_order),0) FROM players WHERE is_friend=1",
+        [],
+        |row| row.get(0),
+    )?;
+    // If every curated friend is still 0, assign 1..n by display name.
+    // If some already have order, only bump the zeros after max.
+    let all_zero = max == 0;
+    for (index, user_id) in ids.into_iter().enumerate() {
+        let order = if all_zero {
+            (index as i64) + 1
+        } else {
+            max + (index as i64) + 1
+        };
+        conn.execute(
+            "UPDATE players SET sort_order=?2 WHERE user_id=?1",
+            params![user_id, order],
+        )?;
+    }
+    Ok(())
 }
 
 fn add_column_if_missing(
@@ -124,27 +181,74 @@ fn add_column_if_missing(
 pub fn list_players(conn: &Connection) -> Result<Vec<Player>> {
     let mut stmt = conn.prepare(
         "SELECT p.user_id,p.display_name,p.profile_pic_url,p.avatar_thumbnail_url,p.trust_level,
-        p.note,p.vrcx_memo,p.source,p.last_synced_at,p.is_friend,
+        p.note,p.vrcx_memo,p.source,p.last_synced_at,p.is_friend,p.is_vrchat_friend,p.sort_order,
         (SELECT COUNT(*) FROM photo_people pp WHERE pp.user_id=p.user_id)
-        FROM players p ORDER BY p.display_name COLLATE NOCASE",
+        FROM players p
+        ORDER BY p.sort_order ASC, p.display_name COLLATE NOCASE",
     )?;
-    let players = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get(2)?,
-            row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?,
-            row.get::<_, String>(7)?, row.get(8)?, row.get::<_, i64>(9)? != 0, row.get(10)?,
-        ))
-    })?.collect::<rusqlite::Result<Vec<_>>>()?
-        .into_iter().map(|(id, name, profile, avatar, trust, note, memo, source, synced, is_friend, count)| {
-            let mut names = conn.prepare("SELECT display_name FROM display_name_history WHERE user_id=?1 AND display_name != ?2 ORDER BY changed_at DESC LIMIT 10")?;
-            let previous_names = names.query_map(params![id, name], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
-            Ok(Player {
-                user_id: id, display_name: name, profile_pic_url: profile,
-                avatar_thumbnail_url: avatar, trust_level: trust, note,
-                vrcx_memo: memo, source, previous_names, photo_count: count,
-                last_synced_at: synced, is_friend,
-            })
-        }).collect::<Result<Vec<_>>>()?;
+    let players = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get::<_, String>(7)?,
+                row.get(8)?,
+                row.get::<_, i64>(9)? != 0,
+                row.get::<_, i64>(10)? != 0,
+                row.get::<_, i64>(11)?,
+                row.get(12)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .map(
+            |(
+                id,
+                name,
+                profile,
+                avatar,
+                trust,
+                note,
+                memo,
+                source,
+                synced,
+                is_friend,
+                is_vrchat_friend,
+                sort_order,
+                count,
+            )| {
+                let mut names = conn.prepare(
+                    "SELECT display_name FROM display_name_history
+                     WHERE user_id=?1 AND display_name != ?2
+                     ORDER BY changed_at DESC LIMIT 10",
+                )?;
+                let previous_names = names
+                    .query_map(params![id, name], |r| r.get(0))?
+                    .collect::<rusqlite::Result<Vec<String>>>()?;
+                Ok(Player {
+                    user_id: id,
+                    display_name: name,
+                    profile_pic_url: profile,
+                    avatar_thumbnail_url: avatar,
+                    trust_level: trust,
+                    note,
+                    vrcx_memo: memo,
+                    source,
+                    previous_names,
+                    photo_count: count,
+                    last_synced_at: synced,
+                    is_friend,
+                    is_vrchat_friend,
+                    sort_order,
+                })
+            },
+        )
+        .collect::<Result<Vec<_>>>()?;
     Ok(players)
 }
 
@@ -226,7 +330,6 @@ pub fn settings(conn: &Connection) -> Result<AppSettings> {
             .or_else(default_album_folder),
         steam_screenshot_folder: setting(conn, "steam_screenshot_folder")?
             .filter(|path| !path.trim().is_empty()),
-        vrcx_database_path: setting(conn, "vrcx_database_path")?,
         sync_interval_minutes: setting(conn, "sync_interval_minutes")?
             .and_then(|value| value.parse().ok())
             .unwrap_or(15),
@@ -243,7 +346,6 @@ pub fn save_settings(conn: &Connection, settings: &AppSettings) -> Result<()> {
             "steam_screenshot_folder",
             settings.steam_screenshot_folder.as_deref(),
         ),
-        ("vrcx_database_path", settings.vrcx_database_path.as_deref()),
     ] {
         if let Some(value) = value {
             set_setting(conn, key, value)?;
@@ -298,20 +400,84 @@ pub fn unassign_photo(conn: &Connection, photo_id: i64, user_id: &str) -> Result
 }
 
 pub fn set_friend(conn: &Connection, user_id: &str, selected: bool) -> Result<()> {
-    conn.execute(
-        "UPDATE players SET is_friend=?2 WHERE user_id=?1",
-        params![user_id, selected as i64],
-    )?;
+    if selected {
+        let next: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(sort_order),0)+1 FROM players WHERE is_friend=1",
+            [],
+            |row| row.get(0),
+        )?;
+        conn.execute(
+            "UPDATE players SET is_friend=1, sort_order=?2 WHERE user_id=?1",
+            params![user_id, next],
+        )?;
+    } else {
+        conn.execute(
+            "UPDATE players SET is_friend=0, sort_order=0 WHERE user_id=?1",
+            params![user_id],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn reorder_friends(conn: &Connection, user_ids: &[String]) -> Result<()> {
+    let curated = friend_ids(conn)?;
+    if user_ids.len() != curated.len() {
+        anyhow::bail!("好友排序列表与当前精选不一致");
+    }
+    let curated_set: std::collections::HashSet<_> = curated.into_iter().collect();
+    for user_id in user_ids {
+        if !curated_set.contains(user_id) {
+            anyhow::bail!("只能排序精选好友");
+        }
+    }
+    let transaction = conn.unchecked_transaction()?;
+    for (index, user_id) in user_ids.iter().enumerate() {
+        transaction.execute(
+            "UPDATE players SET sort_order=?2 WHERE user_id=?1 AND is_friend=1",
+            params![user_id, (index as i64) + 1],
+        )?;
+    }
+    transaction.commit()?;
     Ok(())
 }
 
 pub fn friend_ids(conn: &Connection) -> Result<Vec<String>> {
-    let mut statement =
-        conn.prepare("SELECT user_id FROM players WHERE is_friend=1 ORDER BY user_id")?;
+    let mut statement = conn.prepare(
+        "SELECT user_id FROM players WHERE is_friend=1 ORDER BY sort_order ASC, user_id",
+    )?;
     let ids = statement
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(ids)
+}
+
+pub fn vrchat_friend_ids(conn: &Connection) -> Result<std::collections::HashSet<String>> {
+    let mut statement = conn.prepare("SELECT user_id FROM players WHERE is_vrchat_friend=1")?;
+    let ids = statement
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+    Ok(ids)
+}
+
+/// Clears `is_vrchat_friend` for anyone no longer in `current`.
+/// Call after upserting current friends with `is_vrchat_friend=1`.
+/// Never modifies curated `is_friend`.
+pub fn reconcile_vrchat_friends(
+    conn: &Connection,
+    current: &std::collections::HashSet<String>,
+) -> Result<VrchatFriendReconcile> {
+    let previous = vrchat_friend_ids(conn)?;
+    let unmarked = previous.difference(current).count();
+    for user_id in previous.difference(current) {
+        conn.execute(
+            "UPDATE players SET is_vrchat_friend=0 WHERE user_id=?1",
+            params![user_id],
+        )?;
+    }
+    Ok(VrchatFriendReconcile {
+        total: current.len(),
+        unmarked,
+    })
 }
 
 #[cfg(test)]
@@ -339,14 +505,42 @@ mod tests {
         )
         .unwrap();
         assert!(!list_players(&conn).unwrap()[0].is_friend);
+        assert!(!list_players(&conn).unwrap()[0].is_vrchat_friend);
         set_friend(&conn, "usr_test", true).unwrap();
         assert!(list_players(&conn).unwrap()[0].is_friend);
         conn.execute(
-            "INSERT INTO players(user_id,display_name) VALUES('usr_other','Other')",
+            "INSERT INTO players(user_id,display_name,is_vrchat_friend) VALUES('usr_other','Other',1)",
             [],
         )
         .unwrap();
         assert_eq!(friend_ids(&conn).unwrap(), vec!["usr_test"]);
+        let mut current = std::collections::HashSet::new();
+        current.insert("usr_test".into());
+        conn.execute(
+            "UPDATE players SET is_vrchat_friend=1 WHERE user_id='usr_test'",
+            [],
+        )
+        .unwrap();
+        let reconcile = reconcile_vrchat_friends(&conn, &current).unwrap();
+        assert_eq!(reconcile.total, 1);
+        assert_eq!(reconcile.unmarked, 1);
+        assert!(list_players(&conn)
+            .unwrap()
+            .iter()
+            .any(|p| p.user_id == "usr_test" && p.is_friend && p.is_vrchat_friend));
+        assert!(list_players(&conn)
+            .unwrap()
+            .iter()
+            .any(|p| p.user_id == "usr_other" && !p.is_vrchat_friend));
+        set_friend(&conn, "usr_other", true).unwrap();
+        reconcile_vrchat_friends(&conn, &current).unwrap();
+        let former = list_players(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|player| player.user_id == "usr_other")
+            .unwrap();
+        assert!(!former.is_vrchat_friend);
+        assert!(former.is_friend);
         let photo_id = conn
             .query_row("SELECT id FROM photos LIMIT 1", [], |row| {
                 row.get::<_, i64>(0)
@@ -359,5 +553,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(changed, 2);
+    }
+
+    #[test]
+    fn friend_sort_appends_and_reorders() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = open(&directory.path().join("sort.db")).unwrap();
+        for (id, name) in [("usr_a", "Alpha"), ("usr_b", "Bravo"), ("usr_c", "Charlie")] {
+            conn.execute(
+                "INSERT INTO players(user_id,display_name) VALUES(?1,?2)",
+                params![id, name],
+            )
+            .unwrap();
+        }
+        set_friend(&conn, "usr_b", true).unwrap();
+        set_friend(&conn, "usr_a", true).unwrap();
+        set_friend(&conn, "usr_c", true).unwrap();
+        assert_eq!(
+            friend_ids(&conn).unwrap(),
+            vec!["usr_b".to_string(), "usr_a".into(), "usr_c".into()]
+        );
+        assert_eq!(
+            list_players(&conn)
+                .unwrap()
+                .into_iter()
+                .filter(|player| player.is_friend)
+                .map(|player| player.sort_order)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        reorder_friends(
+            &conn,
+            &["usr_c".into(), "usr_b".into(), "usr_a".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            friend_ids(&conn).unwrap(),
+            vec!["usr_c".to_string(), "usr_b".into(), "usr_a".into()]
+        );
+        set_friend(&conn, "usr_b", false).unwrap();
+        let bravo = list_players(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|player| player.user_id == "usr_b")
+            .unwrap();
+        assert!(!bravo.is_friend);
+        assert_eq!(bravo.sort_order, 0);
+        set_friend(&conn, "usr_b", true).unwrap();
+        assert_eq!(
+            friend_ids(&conn).unwrap(),
+            vec!["usr_c".to_string(), "usr_a".into(), "usr_b".into()]
+        );
     }
 }

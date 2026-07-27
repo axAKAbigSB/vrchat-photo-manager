@@ -98,6 +98,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .player { min-height: 54px; padding: 8px 13px; border-left-width: 3px; }
 .player:hover { background: #1a1a1a; }
 .player.active { background: linear-gradient(90deg, #282828, #191919); border-left-color: #fff; }
+.player.dragging { opacity: 0.45; }
+.player.drag-over { background: #252525; border-left-color: #aaa; }
+.player[draggable="true"] { cursor: grab; }
+.player[draggable="true"]:active { cursor: grabbing; }
 .player img { width: 34px; height: 34px; border-radius: 10px; background: #303030; }
 .player-copy b { font-size: 12px; font-weight: 550; color: #e4e4e4; }
 .trust-visitor { color: #ccc !important; }
