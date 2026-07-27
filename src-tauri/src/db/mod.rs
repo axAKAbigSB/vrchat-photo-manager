@@ -582,11 +582,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1, 2, 3]
         );
-        reorder_friends(
-            &conn,
-            &["usr_c".into(), "usr_b".into(), "usr_a".into()],
-        )
-        .unwrap();
+        reorder_friends(&conn, &["usr_c".into(), "usr_b".into(), "usr_a".into()]).unwrap();
         assert_eq!(
             friend_ids(&conn).unwrap(),
             vec!["usr_c".to_string(), "usr_b".into(), "usr_a".into()]
