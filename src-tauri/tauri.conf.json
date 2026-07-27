@@ -11,7 +11,25 @@
   },
   "app": {
     "windows": [{ "title": "VRC Album", "width": 1200, "height": 760, "minWidth": 900, "minHeight": 600 }],
-    "security": { "csp": null }
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
+    }
   },
-  "bundle": { "active": true, "targets": "all", "icon": [] }
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "publisher": "axAKAbigSB",
+    "shortDescription": "按玩家整理本地 VRChat 照片",
+    "longDescription": "读取 VRCX 玩家资料，分类浏览本地照片，并同步自己的 VRChat Gallery。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
+  }
 }
