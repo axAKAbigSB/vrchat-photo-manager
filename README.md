@@ -1,6 +1,6 @@
 ﻿# VRChat Photo Manager
 
-Windows 桌面端 VRChat 照片管理器（Tauri 2 + React + SQLite）。照片留在本地；玩家关联使用 VRChat `userId`，改名不会打散相册。
+VRChat 照片管理器
 
 ## 功能
 
