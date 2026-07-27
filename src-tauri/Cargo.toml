@@ -1,0 +1,27 @@
+[package]
+name = "vrchat-photo-manager"
+version = "0.1.0"
+description = "A local VRChat photo manager"
+edition = "2021"
+
+[lib]
+name = "vrchat_photo_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+notify = "8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "cookies", "multipart"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+urlencoding = "2"

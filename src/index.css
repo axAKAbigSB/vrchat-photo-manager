@@ -1,0 +1,5 @@
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; }
+body { margin: 0; background: #11131d; color: #edf0ff; font-family: Inter, "Segoe UI", sans-serif; }
+button, input { font: inherit; }
+button { cursor: pointer; }
