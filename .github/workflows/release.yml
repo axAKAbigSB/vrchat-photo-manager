@@ -36,7 +36,7 @@ jobs:
           releaseBody: |
             Windows 安装包见下方 Assets（NSIS `.exe` / `.msi`）。
 
-            需要 Windows 10/11 x64 与 WebView2（多数系统已自带）。未签名安装包可能被 SmartScreen 拦截，选择「仍要运行」即可。
-            不需要安装 VRCX。云端好友与相册同步需登录 VRChat。
+            需要 Windows 10/11 与 WebView2（多数系统已自带）。未签名安装包可能被 SmartScreen 拦截，选择「仍要运行」即可。
+            浏览本地照片无需登录；同步云端好友与相册需登录 VRChat。
           releaseDraft: false
           prerelease: false

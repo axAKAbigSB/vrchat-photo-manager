@@ -67,5 +67,3 @@ Windows 桌面端。打开就能整理本地相册；想同步云端好友和相
 npm install
 npm run tauri dev
 ```
-
-发版：对齐版本号后合并到 `master`，再推送标签（例如 `v0.1.0`），Actions 的 Release 工作流会自动上传安装包。
