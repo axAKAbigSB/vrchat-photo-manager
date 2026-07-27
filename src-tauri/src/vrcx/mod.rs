@@ -1,9 +1,24 @@
 //! Read-only importer for VRCX. This never writes to VRCX's SQLite database.
-use anyhow::{bail, Result};
+use anyhow::Result;
 use rusqlite::{params, Connection};
+use serde::Serialize;
 use std::path::PathBuf;
 
-fn vrcx_database() -> Option<PathBuf> {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VrcxStatus {
+    pub detected: bool,
+    pub path: Option<String>,
+    pub message: String,
+}
+
+fn vrcx_database(app: &Connection) -> Option<PathBuf> {
+    if let Ok(Some(path)) = crate::db::setting(app, "vrcx_database_path") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Some(path);
+        }
+    }
     let roaming = dirs::config_dir()?.join("VRCX");
     let config = roaming.join("VRCX.json");
     if let Ok(text) = std::fs::read_to_string(config) {
@@ -22,7 +37,7 @@ fn vrcx_database() -> Option<PathBuf> {
 }
 
 pub fn import(app: &Connection) -> Result<usize> {
-    let Some(path) = vrcx_database() else {
+    let Some(path) = vrcx_database(app) else {
         return Ok(0);
     };
     let source = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
@@ -71,12 +86,38 @@ pub fn import(app: &Connection) -> Result<usize> {
             app.execute("INSERT OR IGNORE INTO display_name_history(user_id,display_name,previous_display_name,changed_at) VALUES(?1,?2,?3,?4)", params![id, name, previous, at])?;
         }
     }
+    let memo_table_exists: bool = source.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='memos')",
+        [],
+        |row| row.get(0),
+    )?;
+    if memo_table_exists {
+        let mut statement = source.prepare("SELECT user_id,memo FROM memos")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (user_id, memo) = row?;
+            app.execute(
+                "UPDATE players SET vrcx_memo=?2 WHERE user_id=?1",
+                params![user_id, memo],
+            )?;
+        }
+    }
     Ok(count)
 }
 
-pub fn ensure_available() -> Result<()> {
-    if vrcx_database().is_none() {
-        bail!("找不到 VRCX.sqlite3；请在设置中配置 VRCX 数据库路径。")
+pub fn status(app: &Connection) -> VrcxStatus {
+    match vrcx_database(app) {
+        Some(path) => VrcxStatus {
+            detected: true,
+            path: Some(path.to_string_lossy().to_string()),
+            message: "已找到 VRCX 数据库".into(),
+        },
+        None => VrcxStatus {
+            detected: false,
+            path: None,
+            message: "找不到 VRCX.sqlite3；请手动配置路径".into(),
+        },
     }
-    Ok(())
 }
