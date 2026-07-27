@@ -35,7 +35,6 @@ Windows 桌面端 VRChat 照片管理器（Tauri 2 + React + SQLite）。照片�
 
 - Windows 10/11 x64
 - [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（多数系统已自带；没有则需安装）
-- **不需要 VRCX**
 - VRChat 账号：仅云端好友 / Gallery / Prints 同步需要登录
 
 ## 下载与安装
@@ -73,7 +72,6 @@ npm run tauri dev
 
 ## 隐私与认证
 
-- **不依赖 VRCX**；不读写 VRCX 数据库或 cookie
 - VRChat API 使用本应用自己的登录会话
 - 旧版若把会话写在本地 `settings` 表，启动时会迁移到 keyring 并清除库内明文
 
