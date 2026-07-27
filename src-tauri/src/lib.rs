@@ -2,7 +2,6 @@ mod db;
 mod photos;
 mod sync;
 mod vrchat;
-mod vrcx;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -120,13 +119,8 @@ fn set_friend(user_id: String, selected: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn vrcx_status() -> Result<vrcx::VrcxStatus, String> {
-    Ok(vrcx::status(&connection()?))
-}
-
-#[tauri::command]
-fn import_vrcx() -> Result<usize, String> {
-    vrcx::import(&connection()?).map_err(|error| error.to_string())
+fn reorder_friends(user_ids: Vec<String>) -> Result<(), String> {
+    db::reorder_friends(&connection()?, &user_ids).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -260,8 +254,7 @@ pub fn run() {
             assign_photos_to_friends,
             unassign_photo,
             set_friend,
-            vrcx_status,
-            import_vrcx,
+            reorder_friends,
             start_sync,
             get_sync_status,
             get_last_sync,

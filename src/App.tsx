@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Camera, ChevronDown, ChevronLeft, ChevronRight, Cloud, FolderOpen,
   Image, Images, LoaderCircle, LogOut, Maximize2, Search, Settings,
-  Unlink, UserRound, Users, X,
+  Unlink, Users, X,
 } from 'lucide-react'
 import {
   api, type AppSettings, type LastSync, type Photo, type Player, type SyncStatus,
-  type VrcxStatus, type VrchatSessionStatus,
+  type VrchatSessionStatus,
 } from './lib/api'
 import './App.css'
 
@@ -59,17 +59,18 @@ function App() {
   const [friendManagerOpen, setFriendManagerOpen] = useState(false)
   const [friendQuery, setFriendQuery] = useState('')
   const [settings, setSettings] = useState<AppSettings>({ syncIntervalMinutes: 15, showSelfInFriends: true })
-  const [vrcxStatus, setVrcxStatus] = useState<VrcxStatus>()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [twoFactorCode, setTwoFactorCode] = useState('')
   const [twoFactorMethods, setTwoFactorMethods] = useState<string[]>([])
+  const [draggingFriendId, setDraggingFriendId] = useState<string>()
+  const [dragOverFriendId, setDragOverFriendId] = useState<string>()
   const syncing = syncStatus?.running ?? false
 
   const selectedPlayer = players.find((player) => player.userId === selectedId)
   const curatedFriends = useMemo(() => players
     .filter((player) => player.isFriend && player.userId !== sessionStatus?.userId)
-    .sort((left, right) => left.displayName.localeCompare(right.displayName)),
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.displayName.localeCompare(right.displayName)),
   [players, sessionStatus?.userId])
   const friends = useMemo(() => {
     const self = settings.showSelfInFriends
@@ -77,6 +78,7 @@ function App() {
       : undefined
     return self ? [self, ...curatedFriends] : curatedFriends
   }, [players, curatedFriends, sessionStatus?.userId, settings.showSelfInFriends])
+  const canReorderFriends = !query.trim()
   const visibleFriends = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return friends
@@ -87,13 +89,30 @@ function App() {
   }, [friends, query])
   const managedPlayers = useMemo(() => {
     const normalized = friendQuery.trim().toLowerCase()
-    const candidates = players.filter((player) => player.userId !== sessionStatus?.userId)
-    if (!normalized) return candidates
-    return candidates.filter((player) =>
+    const candidates = players.filter((player) =>
+      player.userId !== sessionStatus?.userId
+      && (player.isVrchatFriend || player.isFriend || player.photoCount > 0),
+    )
+    const sorted = [...candidates].sort((left, right) => {
+      const rank = (player: Player) => {
+        if (player.isVrchatFriend) return 0
+        if (player.isFriend) return 1
+        return 2
+      }
+      const byRank = rank(left) - rank(right)
+      return byRank || left.displayName.localeCompare(right.displayName)
+    })
+    if (!normalized) return sorted
+    return sorted.filter((player) =>
       [player.note, player.vrcxMemo, player.displayName, player.userId, ...player.previousNames]
         .filter(Boolean).some((value) => value!.toLowerCase().includes(normalized)),
     )
   }, [players, friendQuery, sessionStatus?.userId])
+  const friendStatusLabel = (player: Player) => {
+    if (player.isVrchatFriend) return 'VRChat 好友'
+    if (player.isFriend) return '已解除 VRChat 好友 · 仍精选'
+    return '仅本地 / 有关联照片'
+  }
   const visiblePhotos = useMemo(() => photos.filter((photo) => {
     const fromSource = !sourceFilter || photo.source === sourceFilter
     return fromSource
@@ -106,8 +125,11 @@ function App() {
     try {
       const kind = view === 'album' || view === 'screenshot' ? view : undefined
       const userId = view === 'player' ? selectedId : undefined
-      setPhotos(await api.listPhotos(userId, kind))
-      setSelectedPhotos(new Set())
+      const next = await api.listPhotos(userId, kind)
+      const nextIds = new Set(next.map((photo) => photo.id))
+      setPhotos(next)
+      // Keep multi-select across reloads (e.g. sync finished); drop only missing ids.
+      setSelectedPhotos((current) => new Set([...current].filter((id) => nextIds.has(id))))
     } finally {
       setLoading(false)
     }
@@ -117,7 +139,6 @@ function App() {
     void Promise.all([
       refreshPlayers(),
       api.getSettings().then(setSettings),
-      api.vrcxStatus().then(setVrcxStatus),
       api.vrchatSessionStatus().then(async (status) => {
         setSessionStatus(status)
         if (status.status === 'active') await refreshPlayers()
@@ -156,10 +177,14 @@ function App() {
     setView(next)
     setSelectedId(undefined)
     setPhotosOpen(true)
+    setSelectedPhotos(new Set())
+    setSelectionMode(false)
   }
   const choosePlayer = (player: Player) => {
     setSelectedId(player.userId)
     setView('player')
+    setSelectedPhotos(new Set())
+    setSelectionMode(false)
   }
   const sync = async () => {
     try {
@@ -174,20 +199,10 @@ function App() {
       let count = 0
       if (settings.albumFolder) count += await api.scanPhotoFolder(settings.albumFolder, 'album')
       if (settings.steamScreenshotFolder) count += await api.scanPhotoFolder(settings.steamScreenshotFolder, 'screenshot')
-      setVrcxStatus(await api.vrcxStatus())
       setNotice(`设置已保存，共索引 ${count} 张照片。`)
       await refreshPhotos()
     } catch (error) {
       setNotice(errorMessage(error, '保存设置失败'))
-    }
-  }
-  const importVrcx = async () => {
-    try {
-      const count = await api.importVrcx()
-      setNotice(`已从 VRCX 导入 ${count} 位玩家。`)
-      await refreshPlayers()
-    } catch (error) {
-      setNotice(errorMessage(error, 'VRCX 导入失败'))
     }
   }
   const login = async () => {
@@ -225,12 +240,6 @@ function App() {
       setLoggingIn(false)
     }
   }
-  const assignSelected = async (userId: string) => {
-    if (!selectedPhotos.size) return
-    const count = await api.assignPhotos([...selectedPhotos], userId)
-    setNotice(`已添加 ${count} 个照片关联。`)
-    await Promise.all([refreshPlayers(), refreshPhotos()])
-  }
   const togglePhoto = (id: number) => setSelectedPhotos((current) => {
     setSelectionMode(true)
     const next = new Set(current)
@@ -240,9 +249,36 @@ function App() {
   const toggleFriend = async (player: Player) => {
     const selected = !player.isFriend
     await api.setFriend(player.userId, selected)
-    setPlayers((current) => current.map((item) =>
-      item.userId === player.userId ? { ...item, isFriend: selected } : item,
-    ))
+    if (selected) {
+      const nextOrder = Math.max(0, ...players.filter((item) => item.isFriend).map((item) => item.sortOrder)) + 1
+      setPlayers((current) => current.map((item) =>
+        item.userId === player.userId ? { ...item, isFriend: true, sortOrder: nextOrder } : item,
+      ))
+    } else {
+      setPlayers((current) => current.map((item) =>
+        item.userId === player.userId ? { ...item, isFriend: false, sortOrder: 0 } : item,
+      ))
+    }
+  }
+  const reorderCuratedFriends = async (fromId: string, toId: string) => {
+    if (fromId === toId) return
+    const ids = curatedFriends.map((player) => player.userId)
+    const from = ids.indexOf(fromId)
+    const to = ids.indexOf(toId)
+    if (from < 0 || to < 0) return
+    const next = [...ids]
+    next.splice(from, 1)
+    next.splice(to, 0, fromId)
+    setPlayers((current) => current.map((player) => {
+      const index = next.indexOf(player.userId)
+      return index < 0 ? player : { ...player, sortOrder: index + 1 }
+    }))
+    try {
+      await api.reorderFriends(next)
+    } catch (error) {
+      setNotice(errorMessage(error, '好友排序失败'))
+      await refreshPlayers()
+    }
   }
   const openAssociation = (photoIds: number[]) => {
     setAssociationPhotoIds(photoIds)
@@ -292,31 +328,55 @@ function App() {
           <button className="friend-manage-button" onClick={() => setFriendManagerOpen(true)}><Users size={14} />管理好友</button>
           {friends.length > 0 && <label className="search-box"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索好友" /></label>}
           <div className="player-list">
-            {visibleFriends.map((player) => <button
-              className={`player ${view === 'player' && player.userId === selectedId ? 'active' : ''}`}
-              key={player.userId}
-              onClick={() => choosePlayer(player)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault()
-                const draggedId = Number(event.dataTransfer.getData('text/photo-id'))
-                if (draggedId && !selectedPhotos.has(draggedId)) {
-                  setSelectedPhotos(new Set([draggedId]))
-                  void api.assignPhotos([draggedId], player.userId).then(async (count) => {
-                    setNotice(`已添加 ${count} 个照片关联。`)
-                    await Promise.all([refreshPlayers(), refreshPhotos()])
-                  })
-                } else {
-                  void assignSelected(player.userId)
-                }
-              }}
-              title={player.previousNames.length ? `曾用名：${player.previousNames.join('、')}` : player.userId}
-            >
-              <img src={player.profilePicUrl || `${avatarFallback}${encodeURIComponent(player.userId)}`} alt="" />
-              <span className="player-copy"><b className={trustClass(player.trustLevel)}>{displayPlayer(player)}</b><small>{player.userId === sessionStatus?.userId ? '自己 · ' : ''}{player.photoCount} 张照片</small></span>
-            </button>)}
+            {visibleFriends.map((player) => {
+              const isSelf = player.userId === sessionStatus?.userId
+              const reorderable = canReorderFriends && !isSelf
+              return <button
+                className={`player ${view === 'player' && player.userId === selectedId ? 'active' : ''} ${draggingFriendId === player.userId ? 'dragging' : ''} ${dragOverFriendId === player.userId ? 'drag-over' : ''}`}
+                key={player.userId}
+                type="button"
+                draggable={reorderable}
+                onClick={() => choosePlayer(player)}
+                onDragStart={(event) => {
+                  if (!reorderable) {
+                    event.preventDefault()
+                    return
+                  }
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.setData('text/player-id', player.userId)
+                  setDraggingFriendId(player.userId)
+                }}
+                onDragEnd={() => {
+                  setDraggingFriendId(undefined)
+                  setDragOverFriendId(undefined)
+                }}
+                onDragOver={(event) => {
+                  if (!reorderable || !draggingFriendId || draggingFriendId === player.userId) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  setDragOverFriendId(player.userId)
+                }}
+                onDragLeave={() => {
+                  if (dragOverFriendId === player.userId) setDragOverFriendId(undefined)
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  const fromId = event.dataTransfer.getData('text/player-id')
+                  setDraggingFriendId(undefined)
+                  setDragOverFriendId(undefined)
+                  if (!reorderable || !fromId || isSelf) return
+                  void reorderCuratedFriends(fromId, player.userId)
+                }}
+                title={player.previousNames.length ? `曾用名：${player.previousNames.join('、')}` : player.userId}
+              >
+                <img src={player.profilePicUrl || `${avatarFallback}${encodeURIComponent(player.userId)}`} alt="" />
+                <span className="player-copy"><b className={trustClass(player.trustLevel)}>{displayPlayer(player)}</b><small>{isSelf ? '自己 · ' : ''}{player.photoCount} 张照片</small></span>
+              </button>
+            })}
             {!friends.length
-              ? <div className="empty friend-empty">尚未选择好友<small>点击“管理好友”添加</small></div>
+              ? <div className="empty friend-empty">尚未选择精选好友<small>{sessionStatus?.status === 'active'
+                ? '先点「立即同步」拉取 VRChat 好友，再在「管理好友」中精选'
+                : '请先登录 VRChat，同步好友后再精选到左栏'}</small></div>
               : !visibleFriends.length && <div className="empty">没有匹配的好友</div>}
           </div>
         </>}
@@ -355,7 +415,7 @@ function App() {
           <img className="profile-avatar" src={selectedPlayer.profilePicUrl || `${avatarFallback}${encodeURIComponent(selectedPlayer.userId)}`} alt="" />
           <div><h2 className={trustClass(selectedPlayer.trustLevel)}>{displayPlayer(selectedPlayer)}</h2>
             <p>{selectedPlayer.vrcxMemo || (selectedPlayer.trustLevel ? `信任等级：${selectedPlayer.trustLevel}` : '已关联 VRChat 玩家')}</p>
-            <p className="source">资料来源：{selectedPlayer.source === 'vrcx' ? 'VRCX' : 'VRChat API'}{selectedPlayer.lastSyncedAt ? ` · ${selectedPlayer.lastSyncedAt}` : ''}</p>
+            {selectedPlayer.userId !== sessionStatus?.userId && <p className="source">资料来源：{selectedPlayer.source === 'api' ? 'VRChat API' : selectedPlayer.source === 'vrcx' ? '历史 VRCX' : '本地'}{selectedPlayer.isVrchatFriend ? ' · 当前好友' : selectedPlayer.isFriend ? ' · 已解除好友（仍精选）' : ''}{selectedPlayer.lastSyncedAt ? ` · ${selectedPlayer.lastSyncedAt}` : ''}</p>}
           </div>
           <a href={`https://vrchat.com/home/user/${selectedPlayer.userId}`} target="_blank" rel="noreferrer">打开 VRChat 资料页</a>
         </section>}
@@ -379,13 +439,14 @@ function App() {
           }}>退出多选</button>
         </div>}
         <section className={`photo-grid ${selectionMode ? 'selection-mode' : ''}`}>
-          {visiblePhotos.map((photo, index) => <article className={`photo-card ${selectedPhotos.has(photo.id) ? 'selected' : ''}`} key={photo.id} draggable
-            onDragStart={(event) => { event.dataTransfer.setData('text/photo-id', String(photo.id)); if (!selectedPhotos.has(photo.id)) setSelectedPhotos(new Set([photo.id])) }}>
+          {visiblePhotos.map((photo, index) => <article className={`photo-card ${selectedPhotos.has(photo.id) ? 'selected' : ''}`} key={photo.id}>
             <button className="photo-preview" onClick={() => selectionMode ? togglePhoto(photo.id) : setPreviewIndex(index)}>
               <img src={photo.thumbnailPath || photo.remoteUrl || photo.localPath} alt="" loading="lazy" />
               <Maximize2 className="zoom-icon" size={17} />
             </button>
-            <label className="photo-select"><input type="checkbox" checked={selectedPhotos.has(photo.id)} onChange={() => togglePhoto(photo.id)} /></label>
+            <label className="photo-select" onClick={(event) => event.stopPropagation()}>
+              <input type="checkbox" checked={selectedPhotos.has(photo.id)} onChange={() => togglePhoto(photo.id)} />
+            </label>
             <span className="photo-info"><small>{photo.kind === 'screenshot' ? 'Steam 截图' : photo.source === 'vrchat_gallery' ? 'VRChat 相册' : photo.source === 'vrchat_print' ? 'VRChat 拍立得' : '相册'}{photo.people.length ? ` · ${photo.people.length} 位玩家` : ' · 未关联'}</small></span>
           </article>)}
           {!loading && !visiblePhotos.length && <div className="empty gallery-empty"><Images size={28} />这里还没有图片
@@ -405,7 +466,7 @@ function App() {
           <button className="preview-arrow right" disabled={previewIndex === visiblePhotos.length - 1} onClick={() => setPreviewIndex((previewIndex ?? -1) + 1)}><ChevronRight /></button>
           <footer><div><small>{preview.capturedAt || '拍摄时间未知'}</small></div>
             <div className="preview-actions">
-              {preview.people.map((id) => <span key={id}>{displayPlayer(players.find((player) => player.userId === id) ?? { userId: id, displayName: id, source: 'local', previousNames: [], photoCount: 0, isFriend: false })}</span>)}
+              {preview.people.map((id) => <span key={id}>{displayPlayer(players.find((player) => player.userId === id) ?? { userId: id, displayName: id, source: 'local', previousNames: [], photoCount: 0, isFriend: false, isVrchatFriend: false, sortOrder: 0 })}</span>)}
               <button onClick={() => openAssociation([preview.id])}><Users size={14} />关联好友</button>
               {view === 'player' && selectedId && preview.people.includes(selectedId) && <button onClick={async () => { await api.unassignPhoto(preview.id, selectedId); setPreviewIndex(undefined); await refreshPhotos() }}><Unlink size={14} />移除关联</button>}
               <button onClick={() => void api.openPhoto(preview)}><FolderOpen size={14} />打开原文件</button>
@@ -430,10 +491,6 @@ function App() {
           <label>同步间隔（分钟）<input type="number" min="5" value={settings.syncIntervalMinutes} onChange={(event) => setSettings({ ...settings, syncIntervalMinutes: Number(event.target.value) })} /></label>
           <label className="setting-toggle"><span>在好友栏顶部显示自己</span><input type="checkbox" checked={settings.showSelfInFriends} onChange={(event) => setSettings({ ...settings, showSelfInFriends: event.target.checked })} /></label>
           <button className="primary wide" onClick={() => void saveAndScan()}><FolderOpen size={16} />保存并扫描目录</button>
-          <hr /><h3>VRCX</h3>
-          <label>数据库路径<input value={settings.vrcxDatabasePath ?? ''} onChange={(event) => setSettings({ ...settings, vrcxDatabasePath: event.target.value })} placeholder="%AppData%\\VRCX\\VRCX.sqlite3" /></label>
-          <p className={`help ${vrcxStatus?.detected ? 'ok' : ''}`}>{vrcxStatus?.message ?? '正在检测 VRCX…'}{vrcxStatus?.path ? `：${vrcxStatus.path}` : ''}</p>
-          <button className="secondary wide" onClick={() => void importVrcx()}><UserRound size={16} />立即导入 VRCX 玩家</button>
         </section>
       </div>}
 
@@ -473,15 +530,17 @@ function App() {
 
       {friendManagerOpen && <div className="modal-backdrop" onMouseDown={() => setFriendManagerOpen(false)}>
         <section className="settings-modal friend-manager-modal" onMouseDown={(event) => event.stopPropagation()}>
-          <div className="modal-heading"><div><h2>管理好友</h2><small>选择要固定显示在左栏的玩家</small></div><button onClick={() => setFriendManagerOpen(false)}>×</button></div>
+          <div className="modal-heading"><div><h2>管理好友</h2><small>从 VRChat 好友中精选显示在左栏的玩家；解除好友不会自动取消精选</small></div><button onClick={() => setFriendManagerOpen(false)}>×</button></div>
           <label className="friend-manager-search"><Search size={15} /><input value={friendQuery} onChange={(event) => setFriendQuery(event.target.value)} placeholder="搜索备注、昵称、曾用名或 ID" autoFocus /></label>
           <div className="friend-manager-list">
             {managedPlayers.map((player) => <label className="friend-manager-item" key={player.userId}>
               <input type="checkbox" checked={player.isFriend} onChange={() => void toggleFriend(player)} />
               <img src={player.profilePicUrl || `${avatarFallback}${encodeURIComponent(player.userId)}`} alt="" />
-              <span><b className={trustClass(player.trustLevel)}>{displayPlayer(player)}</b><small>{player.userId}</small></span>
+              <span><b className={trustClass(player.trustLevel)}>{displayPlayer(player)}</b><small>{friendStatusLabel(player)} · {player.userId}</small></span>
             </label>)}
-            {!managedPlayers.length && <div className="empty">没有匹配的玩家</div>}
+            {!managedPlayers.length && <div className="empty">{sessionStatus?.status === 'active'
+              ? '暂无候选玩家。请先点「立即同步」拉取 VRChat 好友。'
+              : '请先登录 VRChat，再同步好友列表。'}</div>}
           </div>
         </section>
       </div>}

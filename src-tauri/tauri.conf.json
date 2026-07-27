@@ -24,7 +24,7 @@
     "targets": ["msi", "nsis"],
     "publisher": "axAKAbigSB",
     "shortDescription": "按玩家整理本地 VRChat 照片",
-    "longDescription": "读取 VRCX 玩家资料，分类浏览本地照片，并同步自己的 VRChat Gallery。",
+    "longDescription": "同步 VRChat 好友与 Gallery/Prints，并按精选好友整理本地照片。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

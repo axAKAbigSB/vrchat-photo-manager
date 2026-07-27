@@ -16,6 +16,8 @@ export interface Player {
   photoCount: number
   lastSyncedAt?: string
   isFriend: boolean
+  isVrchatFriend: boolean
+  sortOrder: number
 }
 
 export interface Photo {
@@ -35,15 +37,8 @@ export interface Photo {
 export interface AppSettings {
   albumFolder?: string
   steamScreenshotFolder?: string
-  vrcxDatabasePath?: string
   syncIntervalMinutes: number
   showSelfInFriends: boolean
-}
-
-export interface VrcxStatus {
-  detected: boolean
-  path?: string
-  message: string
 }
 
 export interface LoginResult {
@@ -62,7 +57,7 @@ export interface VrchatSessionStatus {
 
 export interface SyncStatus {
   running: boolean
-  phase: 'idle' | 'starting' | 'vrcx' | 'profiles' | 'gallery' | 'done' | 'failed' | 'expired'
+  phase: 'idle' | 'starting' | 'friends' | 'profiles' | 'gallery' | 'done' | 'failed' | 'expired'
   current: number
   total: number
   succeeded: number
@@ -82,7 +77,16 @@ export interface LastSync {
 const isTauri = '__TAURI_INTERNALS__' in window
 
 const demoPlayers: Player[] = [
-  { userId: 'usr_demo_self', displayName: '我的 VRChat 相册', source: 'local', previousNames: [], photoCount: 0, isFriend: false },
+  {
+    userId: 'usr_demo_self',
+    displayName: '我的 VRChat 相册',
+    source: 'local',
+    previousNames: [],
+    photoCount: 0,
+    isFriend: false,
+    isVrchatFriend: false,
+    sortOrder: 0,
+  },
 ]
 
 export const api = {
@@ -139,14 +143,6 @@ export const api = {
     })
     return typeof selected === 'string' ? selected : undefined
   },
-  async vrcxStatus(): Promise<VrcxStatus> {
-    return isTauri
-      ? invoke<VrcxStatus>('vrcx_status')
-      : { detected: false, message: '开发预览模式' }
-  },
-  async importVrcx(): Promise<number> {
-    return isTauri ? invoke<number>('import_vrcx') : 0
-  },
   async assignPhotos(photoIds: number[], userId: string): Promise<number> {
     return isTauri ? invoke<number>('assign_photos', { photoIds, userId }) : 0
   },
@@ -158,6 +154,9 @@ export const api = {
   },
   async setFriend(userId: string, selected: boolean): Promise<void> {
     if (isTauri) await invoke('set_friend', { userId, selected })
+  },
+  async reorderFriends(userIds: string[]): Promise<void> {
+    if (isTauri) await invoke('reorder_friends', { userIds })
   },
   async loginVrchat(username: string, password: string): Promise<LoginResult> {
     if (!isTauri) return { authenticated: true, requiresTwoFactorAuth: [], message: '开发预览模式' }
