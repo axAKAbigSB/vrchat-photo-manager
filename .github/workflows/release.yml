@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: VRC Album ${{ github.ref_name }}
+          releaseBody: |
+            Windows 安装包见下方 Assets（NSIS `.exe` / `.msi`）。
+
+            需要 Windows 10/11 x64 与 WebView2（多数系统已自带）。未签名安装包可能被 SmartScreen 拦截，选择「仍要运行」即可。
+            不需要安装 VRCX。云端好友与相册同步需登录 VRChat。
+          releaseDraft: false
+          prerelease: false

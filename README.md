@@ -31,7 +31,20 @@ Windows 桌面端 VRChat 照片管理器（Tauri 2 + React + SQLite）。照片�
 - Cookie 存在系统钥匙串（keyring），不落在普通配置明文里
 - 429 / 5xx 会重试；401 会停止同步并标记会话过期
 
-## 运行
+## 系统要求
+
+- Windows 10/11 x64
+- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（多数系统已自带；没有则需安装）
+- **不需要 VRCX**
+- VRChat 账号：仅云端好友 / Gallery / Prints 同步需要登录
+
+## 下载与安装
+
+预编译安装包见 [GitHub Releases](https://github.com/axAKAbigSB/vrchat-photo-manager/releases)（NSIS `.exe` 或 `.msi`）。
+
+安装包目前未代码签名，首次运行可能被 Windows SmartScreen 拦截，选择「仍要运行」即可。
+
+## 运行（开发）
 
 ```powershell
 npm install
@@ -39,6 +52,17 @@ npm run tauri dev
 ```
 
 仅预览前端：`npm run dev`。
+
+## 发版（维护者）
+
+1. 将 `package.json` 与 `src-tauri/tauri.conf.json` 的 `version` 对齐（必要时同步 `src-tauri/Cargo.toml`）
+2. 合并到 `master` 并推送
+3. 打标签并推送：
+   ```powershell
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+4. 等待 Actions 的 `Release` 工作流完成；产物会出现在 Releases 页
 
 ## 数据位置
 
