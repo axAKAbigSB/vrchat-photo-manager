@@ -1,83 +1,71 @@
 ﻿# VRChat Photo Manager
 
-VRChat 照片管理器
+把 VRChat 里拍下的瞬间，重新挂回真正在场的那些人身上。
+
+相册里堆着成千上万张截图时，最难的往往不是「存在哪」，而是「这张到底是和谁」。本应用帮你把本地照片、Steam 截图，以及自己的 Gallery / Prints，和好友一一对上号——改名了也认得出人，解除好友也不会把回忆一起删掉。照片始终留在你的电脑上；关联靠的是每个人稳定的 VRChat ID，不是转瞬即逝的显示名。
+
+Windows 桌面端。打开就能整理本地相册；想同步云端好友和相册时，再登录自己的 VRChat 账号即可。
 
 ## 功能
 
 ### 本地照片
-- 默认扫描 `%USERPROFILE%\Pictures\VRChat`（递归）
-- 可选 Steam 截图目录：选中 Steam `userdata` 后，会展开其下 App `438100` 的 screenshots
-- 文件夹监视；位于 `usr_xxx` 目录下的照片会自动关联对应用户
-- 来源筛选：本地 / VRChat Gallery / VRChat Prints（拍立得）
+- 默认读取「图片」文件夹下的 `VRChat` 相册
+- 可选添加 Steam 截图目录
+- 文件夹有变动时自动更新；放在好友 ID 文件夹里的照片会自动关联
+- 可按来源筛选：本地、Gallery、Prints
 
 ### 好友与关联
-- 同步时通过 VRChat Friends API 拉取在线/离线好友，写入候选池（`is_vrchat_friend`）
-- 左栏「好友」是**精选列表**（`is_friend=1`），通过「管理好友」挑选；默认同步不会自动精选
-- VRChat 解除好友只会清除 `is_vrchat_friend`，**不会**自动取消精选或删除玩家/照片关联
-- 可把「自己」置顶显示（设置项，默认开启）
-- 一张照片可关联多位精选好友
+- 同步后可在「管理好友」里挑选要固定显示在左栏的人
+- 解除 VRChat 好友不会取消你已精选的人，也不会删掉照片关联
+- 可把自己置顶显示
+- 一张照片可以关联多位好友
 
-### VRChat 同步
-「立即同步」按顺序执行：
+### 同步
+点「立即同步」会依次：
 
-1. 同步 VRChat 好友列表（分页；标记新增/解除）
-2. 同步**当前登录账号**的 Gallery + Prints（分页拉取）
-3. 仅刷新精选好友资料 / 头像（最多 5 并发）；**不拉取他人 Gallery**
+1. 更新你的 VRChat 好友列表
+2. 同步自己的 Gallery 和 Prints
+3. 刷新精选好友的资料与头像（不会拉取别人的 Gallery）
 
-其它行为：
-
-- **启动不会自动同步**；定时同步会先等满一个间隔再跑（最短 5 分钟）
-- 登录 / 2FA / 登出；会话状态：`loggedOut` / `active` / `expired`
-- Cookie 存在系统钥匙串（keyring），不落在普通配置明文里
-- 429 / 5xx 会重试；401 会停止同步并标记会话过期
+启动时不会自动同步。可在设置里配置定时同步；登录支持两步验证，会话保存在系统钥匙串里。
 
 ## 系统要求
 
-- Windows 10/11 x64
-- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（多数系统已自带；没有则需安装）
-- VRChat 账号：仅云端好友 / Gallery / Prints 同步需要登录
+- Windows 10 / 11
+- 多数电脑已自带 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)；若打不开窗口，按提示安装即可
+- 浏览本地照片无需登录；同步云端内容需要 VRChat 账号
 
 ## 下载与安装
 
-预编译安装包见 [GitHub Releases](https://github.com/axAKAbigSB/vrchat-photo-manager/releases)（NSIS `.exe` 或 `.msi`）。
+到 [GitHub Releases](https://github.com/axAKAbigSB/vrchat-photo-manager/releases) 下载安装包。
 
-安装包目前未代码签名，首次运行可能被 Windows SmartScreen 拦截，选择「仍要运行」即可。
+安装包尚未代码签名，首次运行若被 SmartScreen 拦住，选择「仍要运行」即可。
 
-## 运行（开发）
+## 你的数据在哪
+
+| 内容 | 位置 |
+|---|---|
+| 照片索引数据库 | `%AppData%\vrchat-photo-manager\photos.db` |
+| 登录会话 | Windows 系统钥匙串 |
+
+照片文件本身仍在你原来的文件夹里，本应用不会把它们搬走。
+
+## 隐私
+
+- 使用本应用自己的 VRChat 登录，不借用其它软件的会话
+- 登录信息保存在系统钥匙串，不写进普通配置明文
+
+## 已知限制
+
+- 同步过程暂不可取消
+- 不会根据照片内容自动猜测该关联谁
+- 不同步他人的 Gallery
+
+## 开发与发版
 
 ```powershell
 npm install
 npm run tauri dev
 ```
 
-仅预览前端：`npm run dev`。
-
-## 发版（维护者）
-
-1. 将 `package.json` 与 `src-tauri/tauri.conf.json` 的 `version` 对齐（必要时同步 `src-tauri/Cargo.toml`）
-2. 合并到 `master` 并推送
-3. 打标签并推送：
-   ```powershell
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
-4. 等待 Actions 的 `Release` 工作流完成；产物会出现在 Releases 页
-
-## 数据位置
-
-| 用途 | 位置 |
-|---|---|
-| 应用数据库 | `%AppData%\vrchat-photo-manager\photos.db` |
-| VRChat 会话 | OS keyring：`com.axaka.vrchat-photo-manager` / `vrchat-session` |
-
-## 隐私与认证
-
-- VRChat API 使用本应用自己的登录会话
-- 旧版若把会话写在本地 `settings` 表，启动时会迁移到 keyring 并清除库内明文
-
-## 已知限制
-
-- 无同步取消、无增量同步
-- 不会自动根据照片元数据建议关联
-- 设计上不同步他人 Gallery
-- 真实登录与 2FA 需人工验收
+发版：对齐版本号后合并到 `master`，再推送标签（例如 `v0.1.0`），Actions 的 Release 工作流会自动上传安装包。
