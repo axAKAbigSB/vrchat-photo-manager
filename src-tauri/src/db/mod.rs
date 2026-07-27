@@ -30,7 +30,9 @@ pub struct Photo {
 }
 
 pub fn database_path() -> Result<PathBuf> {
-    let dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("vrchat-photo-manager");
+    let dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("vrchat-photo-manager");
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("photos.db"))
 }
@@ -74,17 +76,33 @@ pub fn list_players(conn: &Connection) -> Result<Vec<Player>> {
             let mut names = conn.prepare("SELECT display_name FROM display_name_history WHERE user_id=?1 AND display_name != ?2 ORDER BY changed_at DESC LIMIT 10")?;
             let previous_names = names.query_map(params![id, name], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
             Ok(Player { user_id: id, display_name: name, profile_pic_url: profile, avatar_thumbnail_url: avatar, trust_level: trust, source, previous_names, photo_count: count })
-        }).collect()
+        }).collect::<Result<Vec<_>>>()?;
+    Ok(players)
 }
 
 pub fn list_photos(conn: &Connection, user_id: &str) -> Result<Vec<Photo>> {
     let mut stmt = conn.prepare("SELECT id,user_id,source,local_path,remote_url,thumbnail_path,file_name,captured_at FROM photos WHERE user_id=?1 ORDER BY captured_at DESC, imported_at DESC")?;
-    Ok(stmt.query_map([user_id], |r| Ok(Photo {
-        id: r.get(0)?, user_id: r.get(1)?, source: r.get(2)?, local_path: r.get(3)?,
-        remote_url: r.get(4)?, thumbnail_path: r.get(5)?, file_name: r.get(6)?, captured_at: r.get(7)?,
-    }))?.collect::<rusqlite::Result<_>>()?)
+    let photos = stmt
+        .query_map([user_id], |r| {
+            Ok(Photo {
+                id: r.get(0)?,
+                user_id: r.get(1)?,
+                source: r.get(2)?,
+                local_path: r.get(3)?,
+                remote_url: r.get(4)?,
+                thumbnail_path: r.get(5)?,
+                file_name: r.get(6)?,
+                captured_at: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(photos)
 }
 
 pub fn setting(conn: &Connection, key: &str) -> Result<Option<String>> {
-    Ok(conn.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| r.get(0)).optional()?)
+    Ok(conn
+        .query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+            r.get(0)
+        })
+        .optional()?)
 }
