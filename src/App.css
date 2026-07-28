@@ -2,7 +2,7 @@
 html,body,#root { height: 100%; overflow: hidden; }
 .app-shell { height: 100vh; display: flex; overflow: hidden; background: var(--bg); color: var(--text); }
 .sidebar { width: 252px; height: 100vh; min-height: 0; flex: 0 0 auto; overflow: hidden; background: #181818; border-right: 1px solid #080808; display: flex; flex-direction: column; padding: 0; }
-.brand { height: 48px; display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; letter-spacing: 0; padding: 0 14px; border-bottom: 1px solid var(--line-soft); background: #171717; }.brand-mark { background: var(--orange); color: #181818; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 3px; box-shadow: none; font-weight: 800; }
+.brand { height: 48px; display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; letter-spacing: 0; padding: 0 14px; border-bottom: 1px solid var(--line-soft); background: #171717; }.brand-mark { width: 22px; height: 22px; display: block; object-fit: contain; border-radius: 0; background: transparent; box-shadow: none; }
 .sidebar-heading { color: #a3a3a3; font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0; display: flex; justify-content: space-between; padding: 15px 14px 8px; }.count { background: transparent; border-radius: 0; padding: 0; color: #777; }
 .search-box { height: 30px; margin: 0 10px 8px; border: 1px solid #363636; color: #7e7e7e; border-radius: 2px; display: flex; align-items: center; gap: 7px; padding: 0 8px; background: #121212; }.search-box input { color: #d4d4d4; width: 100%; border: 0; outline: 0; background: transparent; font-size: 12px; }
 .player-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 0; scrollbar-width: thin; }.player { flex: 0 0 auto; border: 0; border-left: 2px solid transparent; color: #c8c8c8; min-height: 49px; padding: 6px 10px; background: transparent; border-radius: 0; display: flex; text-align: left; gap: 9px; align-items: center; }.player:hover { background: #242424; }.player.active { background: #2c2c2c; border-left-color: var(--orange); box-shadow: none; }.player img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background: #454545; }.player-copy { min-width: 0; display: grid; gap: 2px; }.player-copy b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }.player-copy small { color: #848484; font-size: 11px; }
@@ -51,16 +51,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   border-bottom-color: #252525;
   font-size: 13px;
   font-weight: 650;
-  letter-spacing: .045em;
-  text-transform: uppercase;
+  letter-spacing: .02em;
+  text-transform: none;
 }
 .brand-mark {
   width: 26px;
   height: 26px;
-  border-radius: 8px;
-  background: #f4f4f4;
-  color: #0a0a0a;
-  box-shadow: 0 0 0 1px #fff, 0 6px 18px #fff2;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .section-button {
   min-height: 44px;
