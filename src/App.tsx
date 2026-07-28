@@ -24,7 +24,15 @@ const trustClass = (level?: string) => {
   if (normalized === 'trusted user') return 'trust-trusted'
   return ''
 }
-const formatTime = (value?: string) => value ? new Date(value).toLocaleString() : '尚未同步'
+const formatTime = (value?: string) => {
+  if (!value) return '尚未同步'
+  // SQLite datetime('now') is UTC without a zone; treat it as UTC for local display.
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? `${value.replace(' ', 'T')}Z`
+    : value
+  const date = new Date(normalized)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
 const errorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error) return error.message
   if (typeof error === 'string' && error.trim()) return error
@@ -415,7 +423,7 @@ function App() {
           <img className="profile-avatar" src={selectedPlayer.profilePicUrl || `${avatarFallback}${encodeURIComponent(selectedPlayer.userId)}`} alt="" />
           <div><h2 className={trustClass(selectedPlayer.trustLevel)}>{displayPlayer(selectedPlayer)}</h2>
             <p>{selectedPlayer.vrcxMemo || (selectedPlayer.trustLevel ? `信任等级：${selectedPlayer.trustLevel}` : '已关联 VRChat 玩家')}</p>
-            {selectedPlayer.userId !== sessionStatus?.userId && <p className="source">资料来源：{selectedPlayer.source === 'api' ? 'VRChat API' : selectedPlayer.source === 'vrcx' ? '历史 VRCX' : '本地'}{selectedPlayer.isVrchatFriend ? ' · 当前好友' : selectedPlayer.isFriend ? ' · 已解除好友（仍精选）' : ''}{selectedPlayer.lastSyncedAt ? ` · ${selectedPlayer.lastSyncedAt}` : ''}</p>}
+            {selectedPlayer.userId !== sessionStatus?.userId && <p className="source">资料来源：{selectedPlayer.source === 'api' ? 'VRChat API' : selectedPlayer.source === 'vrcx' ? '历史 VRCX' : '本地'}{selectedPlayer.isVrchatFriend ? ' · 当前好友' : selectedPlayer.isFriend ? ' · 已解除好友（仍精选）' : ''}</p>}
           </div>
           <a href={`https://vrchat.com/home/user/${selectedPlayer.userId}`} target="_blank" rel="noreferrer">打开 VRChat 资料页</a>
         </section>}
@@ -469,7 +477,7 @@ function App() {
               {preview.people.map((id) => <span key={id}>{displayPlayer(players.find((player) => player.userId === id) ?? { userId: id, displayName: id, source: 'local', previousNames: [], photoCount: 0, isFriend: false, isVrchatFriend: false, sortOrder: 0 })}</span>)}
               <button onClick={() => openAssociation([preview.id])}><Users size={14} />关联好友</button>
               {view === 'player' && selectedId && preview.people.includes(selectedId) && <button onClick={async () => { await api.unassignPhoto(preview.id, selectedId); setPreviewIndex(undefined); await refreshPhotos() }}><Unlink size={14} />移除关联</button>}
-              <button onClick={() => void api.openPhoto(preview)}><FolderOpen size={14} />打开原文件</button>
+              <button onClick={() => void api.openPhoto(preview).catch((error) => setNotice(errorMessage(error, '打开原文件失败')))}><FolderOpen size={14} />打开原文件</button>
             </div>
           </footer>
         </section>
@@ -487,7 +495,7 @@ function App() {
             const path = await api.chooseDirectory(settings.steamScreenshotFolder)
             if (path) setSettings((current) => ({ ...current, steamScreenshotFolder: path }))
           }}>选择…</button></span></label>
-          <p className="help">相册会递归扫描 YYYY-MM 等子目录。Steam 会自动识别 userdata，并遍历全部用户的 VRChat（App 438100）截图。</p>
+          <p className="help">相册会递归扫描 YYYY-MM 等子目录。Steam 会自动识别 userdata，并只扫描各用户 VRChat（App 438100）截图目录下的文件（不含 thumbnails 等子文件夹）。</p>
           <label>同步间隔（分钟）<input type="number" min="5" value={settings.syncIntervalMinutes} onChange={(event) => setSettings({ ...settings, syncIntervalMinutes: Number(event.target.value) })} /></label>
           <label className="setting-toggle"><span>在好友栏顶部显示自己</span><input type="checkbox" checked={settings.showSelfInFriends} onChange={(event) => setSettings({ ...settings, showSelfInFriends: event.target.checked })} /></label>
           <button className="primary wide" onClick={() => void saveAndScan()}><FolderOpen size={16} />保存并扫描目录</button>

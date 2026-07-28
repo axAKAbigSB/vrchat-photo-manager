@@ -14,8 +14,8 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 const MAX_RETRIES: usize = 3;
 const GALLERY_PAGE_SIZE: usize = 100;
 const MAX_GALLERY_PAGES: usize = 100;
-const PRINT_PAGE_SIZE: usize = 100;
-const MAX_PRINT_PAGES: usize = 100;
+/// VRChat cloud Prints Gallery cap (VRC+); non-VRC+ is lower, so one request of this size is enough.
+const PRINT_CLOUD_LIMIT: usize = 64;
 const FRIEND_PAGE_SIZE: usize = 100;
 const MAX_FRIEND_PAGES: usize = 100;
 
@@ -378,23 +378,25 @@ pub fn save_player(conn: &Connection, player: User) -> Result<()> {
     let picture = profile_picture(&player);
     let thumbnail = non_empty(player.current_avatar_thumbnail_image_url.clone());
     let trust = trust_level(&player);
+    let synced_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO players(user_id,display_name,profile_pic_url,avatar_thumbnail_url,trust_level,note,source,last_synced_at)
-         VALUES(?1,?2,?3,?4,?5,?6,'api',datetime('now'))
+         VALUES(?1,?2,?3,?4,?5,?6,'api',?7)
          ON CONFLICT(user_id) DO UPDATE SET
            display_name=excluded.display_name,
            profile_pic_url=COALESCE(excluded.profile_pic_url,players.profile_pic_url),
            avatar_thumbnail_url=COALESCE(excluded.avatar_thumbnail_url,players.avatar_thumbnail_url),
            trust_level=excluded.trust_level,
            note=excluded.note,
-           source='api',last_synced_at=datetime('now')",
+           source='api',last_synced_at=excluded.last_synced_at",
         params![
             player.id,
             player.display_name,
             picture,
             thumbnail,
             trust,
-            player.note
+            player.note,
+            synced_at
         ],
     )?;
     Ok(())
@@ -425,9 +427,10 @@ fn save_limited_friend(conn: &Connection, friend: &LimitedFriend) -> Result<()> 
     let picture = friend_profile_picture(friend);
     let thumbnail = non_empty(friend.current_avatar_thumbnail_image_url.clone());
     let trust = friend_trust_level(friend);
+    let synced_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO players(user_id,display_name,profile_pic_url,avatar_thumbnail_url,trust_level,note,source,last_synced_at,is_vrchat_friend)
-         VALUES(?1,?2,?3,?4,?5,?6,'api',datetime('now'),1)
+         VALUES(?1,?2,?3,?4,?5,?6,'api',?7,1)
          ON CONFLICT(user_id) DO UPDATE SET
            display_name=excluded.display_name,
            profile_pic_url=COALESCE(excluded.profile_pic_url,players.profile_pic_url),
@@ -435,7 +438,7 @@ fn save_limited_friend(conn: &Connection, friend: &LimitedFriend) -> Result<()> 
            trust_level=excluded.trust_level,
            note=excluded.note,
            source='api',
-           last_synced_at=datetime('now'),
+           last_synced_at=excluded.last_synced_at,
            is_vrchat_friend=1",
         params![
             friend.id,
@@ -443,7 +446,8 @@ fn save_limited_friend(conn: &Connection, friend: &LimitedFriend) -> Result<()> 
             picture,
             thumbnail,
             trust,
-            friend.note
+            friend.note,
+            synced_at
         ],
     )?;
     Ok(())
@@ -500,20 +504,22 @@ pub async fn sync_own_gallery(conn: &Connection) -> Result<usize> {
     let own_picture = profile_picture(&own);
     let own_thumbnail = non_empty(own.current_avatar_thumbnail_image_url.clone());
     let own_trust = trust_level(&own);
+    let synced_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO players(user_id,display_name,profile_pic_url,avatar_thumbnail_url,trust_level,note,source,last_synced_at)
-         VALUES(?1,?2,?3,?4,?5,?6,'api',datetime('now'))
+         VALUES(?1,?2,?3,?4,?5,?6,'api',?7)
          ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name,
          profile_pic_url=COALESCE(excluded.profile_pic_url,players.profile_pic_url),
          avatar_thumbnail_url=COALESCE(excluded.avatar_thumbnail_url,players.avatar_thumbnail_url),
-         trust_level=excluded.trust_level,note=excluded.note,last_synced_at=datetime('now')",
+         trust_level=excluded.trust_level,note=excluded.note,last_synced_at=excluded.last_synced_at",
         params![
             own.id,
             own.display_name,
             own_picture,
             own_thumbnail,
             own_trust,
-            own.note
+            own.note,
+            synced_at
         ],
     )?;
     let mut count = 0;
@@ -558,51 +564,70 @@ pub async fn sync_own_gallery(conn: &Connection) -> Result<usize> {
         sleep(Duration::from_millis(350)).await;
     }
 
-    let mut print_offset = 0;
-    let mut seen_prints = HashSet::new();
-    for _ in 0..MAX_PRINT_PAGES {
-        let response = send_with_retry(client(&session(conn)?)?.get(format!(
-            "{BASE}/prints/user/{}?n={PRINT_PAGE_SIZE}&offset={print_offset}",
-            own.id
-        )))
-        .await?;
-        if response.status() == StatusCode::UNAUTHORIZED {
-            bail!("VRChat 登录已过期，请重新登录")
-        }
-        let prints: Vec<Print> = response.error_for_status()?.json().await?;
-        let batch_len = prints.len();
-        if batch_len == 0 {
-            break;
-        }
-        let mut new_prints = 0;
-        for print in prints {
-            if !seen_prints.insert(print.id.clone()) {
-                continue;
-            }
-            new_prints += 1;
-            let Some(image) = non_empty(print.files.image) else {
-                continue;
-            };
-            let name = non_empty(print.note).unwrap_or_else(|| "VRChat Print".into());
-            let captured_at = print.timestamp.or(print.created_at);
-            conn.execute(
-                "INSERT INTO photos(user_id,source,kind,vrchat_file_id,remote_url,file_name,captured_at,imported_at)
-                 VALUES(?1,'vrchat_print','album',?2,?3,?4,?5,datetime('now'))
-                 ON CONFLICT(vrchat_file_id,user_id) DO UPDATE SET
-                   source='vrchat_print',remote_url=excluded.remote_url,file_name=excluded.file_name,
-                   captured_at=COALESCE(excluded.captured_at,photos.captured_at)",
-                params![own.id, print.id, image, name, captured_at],
-            )?;
-            count += 1;
-        }
-        if new_prints == 0 {
-            break;
-        }
-        print_offset += batch_len;
-        sleep(Duration::from_millis(350)).await;
-    }
-
+    count += sync_own_prints(conn, &own.id).await?;
     Ok(count)
+}
+
+/// Fetch own Prints Gallery in one request (cloud cap is 64) and drop local copies no longer on the cloud.
+async fn sync_own_prints(conn: &Connection, owner_id: &str) -> Result<usize> {
+    let response = send_with_retry(client(&session(conn)?)?.get(format!(
+        "{BASE}/prints/user/{owner_id}?n={PRINT_CLOUD_LIMIT}&offset=0"
+    )))
+    .await?;
+    if response.status() == StatusCode::UNAUTHORIZED {
+        bail!("VRChat 登录已过期，请重新登录")
+    }
+    let prints: Vec<Print> = response.error_for_status()?.json().await?;
+    let mut seen = HashSet::with_capacity(prints.len());
+    let mut count = 0;
+    for print in prints {
+        if !seen.insert(print.id.clone()) {
+            continue;
+        }
+        let Some(image) = non_empty(print.files.image) else {
+            continue;
+        };
+        let name = non_empty(print.note).unwrap_or_else(|| "VRChat Print".into());
+        let captured_at = print.timestamp.or(print.created_at);
+        conn.execute(
+            "INSERT INTO photos(user_id,source,kind,vrchat_file_id,remote_url,file_name,captured_at,imported_at)
+             VALUES(?1,'vrchat_print','album',?2,?3,?4,?5,datetime('now'))
+             ON CONFLICT(vrchat_file_id,user_id) DO UPDATE SET
+               source='vrchat_print',remote_url=excluded.remote_url,file_name=excluded.file_name,
+               captured_at=COALESCE(excluded.captured_at,photos.captured_at)",
+            params![owner_id, print.id, image, name, captured_at],
+        )?;
+        count += 1;
+    }
+    reconcile_own_prints(conn, owner_id, &seen)?;
+    Ok(count)
+}
+
+fn reconcile_own_prints(
+    conn: &Connection,
+    owner_id: &str,
+    current: &HashSet<String>,
+) -> Result<usize> {
+    let mut statement = conn.prepare(
+        "SELECT id, vrchat_file_id FROM photos
+         WHERE user_id=?1 AND source='vrchat_print' AND vrchat_file_id IS NOT NULL",
+    )?;
+    let stale: Vec<(i64, String)> = statement
+        .query_map(params![owner_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<(i64, String)>>>()?
+        .into_iter()
+        .filter(|(_, file_id)| !current.contains(file_id))
+        .collect();
+    let mut removed = 0;
+    for (photo_id, _) in stale {
+        conn.execute(
+            "DELETE FROM photo_people WHERE photo_id=?1",
+            params![photo_id],
+        )?;
+        conn.execute("DELETE FROM photos WHERE id=?1", params![photo_id])?;
+        removed += 1;
+    }
+    Ok(removed)
 }
 
 fn gallery_page_is_last(batch_len: usize) -> bool {
@@ -759,6 +784,56 @@ mod tests {
             prints[0].files.image.as_deref(),
             Some("https://example/print.png")
         );
+    }
+
+    #[test]
+    fn print_cloud_limit_is_sixty_four() {
+        assert_eq!(PRINT_CLOUD_LIMIT, 64);
+    }
+
+    #[test]
+    fn reconcile_own_prints_removes_stale_cloud_rows() {
+        let directory = tempfile::tempdir().unwrap();
+        let conn = crate::db::open(&directory.path().join("prints.db")).unwrap();
+        for (id, file_id) in [
+            ("keep", "prnt_keep"),
+            ("gone", "prnt_gone"),
+            ("gallery", "file_gallery"),
+        ] {
+            let source = if id == "gallery" {
+                "vrchat_gallery"
+            } else {
+                "vrchat_print"
+            };
+            conn.execute(
+                "INSERT INTO photos(user_id,source,kind,vrchat_file_id,remote_url,file_name,imported_at)
+                 VALUES('usr_me',?1,'album',?2,'https://example/x.png',?3,datetime('now'))",
+                params![source, file_id, id],
+            )
+            .unwrap();
+        }
+        let current = HashSet::from(["prnt_keep".to_owned()]);
+        let removed = reconcile_own_prints(&conn, "usr_me", &current).unwrap();
+        assert_eq!(removed, 1);
+        let print_ids: Vec<String> = conn
+            .prepare(
+                "SELECT vrchat_file_id FROM photos WHERE user_id='usr_me' AND source='vrchat_print'
+                 ORDER BY vrchat_file_id",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(print_ids, vec!["prnt_keep".to_owned()]);
+        let gallery_left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM photos WHERE source='vrchat_gallery'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(gallery_left, 1);
     }
 
     #[test]
