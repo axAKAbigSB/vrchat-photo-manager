@@ -14,6 +14,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Read changelog
+        id: changelog
+        uses: mindsers/changelog-reader-action@v2
+        with:
+          path: ./CHANGELOG.md
+          version: ${{ steps.ver.outputs.version }}
+
+      - name: Build release body
+        id: body
+        env:
+          CHANGES: ${{ steps.changelog.outputs.changes }}
+        shell: bash
+        run: |
+          {
+            echo 'text<<EOF'
+            printf '%s\n' "$CHANGES"
+            echo ""
+            echo "---"
+            echo ""
+            echo "Windows 安装包见下方附件（NSIS \`.exe\` / MSI \`.msi\`，安装界面为简体中文）。"
+            echo ""
+            echo "需要 Windows 10/11 与 WebView2（多数系统已自带）。未签名安装包可能被 SmartScreen 拦截，选择「仍要运行」即可。"
+            echo "浏览本地照片无需登录；同步云端好友与相册需登录 VRChat。"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -33,10 +64,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: VRC Album ${{ github.ref_name }}
-          releaseBody: |
-            Windows 安装包见下方附件（NSIS `.exe` / MSI `.msi`，安装界面为简体中文）。
-
-            需要 Windows 10/11 与 WebView2（多数系统已自带）。未签名安装包可能被 SmartScreen 拦截，选择「仍要运行」即可。
-            浏览本地照片无需登录；同步云端好友与相册需登录 VRChat。
+          releaseBody: ${{ steps.body.outputs.text }}
           releaseDraft: false
           prerelease: false
