@@ -1,4 +1,5 @@
 ﻿# VRChat Photo Manager
+[![Release](https://github.com/axAKAbigSB/vrchat-photo-manager/actions/workflows/release.yml/badge.svg)](https://github.com/axAKAbigSB/vrchat-photo-manager/actions/workflows/release.yml)
 
 把 VRChat 里拍下的瞬间，重新挂回真正在场的那些人身上。
 
