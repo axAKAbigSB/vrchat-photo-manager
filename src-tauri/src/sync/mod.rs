@@ -138,9 +138,7 @@ where
     report(progress.clone());
 
     let settings = crate::db::settings(conn)?;
-    let album = settings
-        .album_folder
-        .filter(|path| !path.is_empty());
+    let album = settings.album_folder.filter(|path| !path.is_empty());
     let steam = settings
         .steam_screenshot_folder
         .filter(|path| !path.is_empty());

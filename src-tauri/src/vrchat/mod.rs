@@ -620,7 +620,10 @@ fn reconcile_own_prints(
         .collect();
     let mut removed = 0;
     for (photo_id, _) in stale {
-        conn.execute("DELETE FROM photo_people WHERE photo_id=?1", params![photo_id])?;
+        conn.execute(
+            "DELETE FROM photo_people WHERE photo_id=?1",
+            params![photo_id],
+        )?;
         conn.execute("DELETE FROM photos WHERE id=?1", params![photo_id])?;
         removed += 1;
     }

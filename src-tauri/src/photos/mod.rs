@@ -114,7 +114,10 @@ fn scan(conn: &Connection, root: &Path, kind: &str, recursive: bool) -> Result<H
 }
 
 fn delete_local_photo(conn: &Connection, photo_id: i64) -> Result<()> {
-    conn.execute("DELETE FROM photo_people WHERE photo_id=?1", params![photo_id])?;
+    conn.execute(
+        "DELETE FROM photo_people WHERE photo_id=?1",
+        params![photo_id],
+    )?;
     conn.execute("DELETE FROM photos WHERE id=?1", params![photo_id])?;
     Ok(())
 }
