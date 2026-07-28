@@ -34,7 +34,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: VRC Album ${{ github.ref_name }}
           releaseBody: |
-            Windows 安装包见下方 Assets（NSIS `.exe` / `.msi`）。
+            Windows 安装包见下方附件（NSIS `.exe` / MSI `.msi`，安装界面为简体中文）。
 
             需要 Windows 10/11 与 WebView2（多数系统已自带）。未签名安装包可能被 SmartScreen 拦截，选择「仍要运行」即可。
             浏览本地照片无需登录；同步云端好友与相册需登录 VRChat。

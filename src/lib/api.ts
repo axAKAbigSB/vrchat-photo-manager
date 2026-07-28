@@ -57,7 +57,7 @@ export interface VrchatSessionStatus {
 
 export interface SyncStatus {
   running: boolean
-  phase: 'idle' | 'starting' | 'friends' | 'profiles' | 'gallery' | 'done' | 'failed' | 'expired'
+  phase: 'idle' | 'starting' | 'folders' | 'friends' | 'profiles' | 'gallery' | 'done' | 'failed' | 'expired'
   current: number
   total: number
   succeeded: number
@@ -170,7 +170,14 @@ export const api = {
     if (isTauri) await invoke('logout_vrchat')
   },
   async openPhoto(photo: Photo): Promise<void> {
-    if (isTauri && photo.originalPath) await openPath(photo.originalPath)
-    else if (photo.remoteUrl) await openUrl(photo.remoteUrl)
+    if (isTauri && photo.originalPath) {
+      await openPath(photo.originalPath)
+      return
+    }
+    if (photo.remoteUrl) {
+      await openUrl(photo.remoteUrl)
+      return
+    }
+    throw new Error('没有可打开的本地路径或远程地址')
   },
 }

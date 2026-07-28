@@ -68,7 +68,9 @@ pub fn database_path() -> Result<PathBuf> {
 pub fn open(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
     conn.execute_batch(
-        "PRAGMA foreign_keys = ON;
+        "PRAGMA journal_mode = WAL;
+        PRAGMA busy_timeout = 5000;
+        PRAGMA foreign_keys = ON;
         CREATE TABLE IF NOT EXISTS players (
             user_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
             profile_pic_url TEXT, avatar_thumbnail_url TEXT, trust_level TEXT,

@@ -90,25 +90,81 @@ fn index_file(conn: &Connection, path: &Path, kind: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn scan(conn: &Connection, root: &Path, kind: &str) -> Result<usize> {
+fn scan(conn: &Connection, root: &Path, kind: &str, recursive: bool) -> Result<HashSet<String>> {
+    let mut seen = HashSet::new();
     if !root.exists() {
-        return Ok(0);
+        return Ok(seen);
     }
-    let mut count = 0;
     let mut todo = vec![root.to_path_buf()];
     while let Some(dir) = todo.pop() {
-        for entry in std::fs::read_dir(dir)? {
+        for entry in std::fs::read_dir(&dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
-                todo.push(path);
+                if recursive {
+                    todo.push(path);
+                }
             } else if is_photo(&path) {
                 index_file(conn, &path, kind)?;
-                count += 1;
+                seen.insert(path.to_string_lossy().to_string());
             }
         }
     }
-    Ok(count)
+    Ok(seen)
+}
+
+fn delete_local_photo(conn: &Connection, photo_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM photo_people WHERE photo_id=?1", params![photo_id])?;
+    conn.execute("DELETE FROM photos WHERE id=?1", params![photo_id])?;
+    Ok(())
+}
+
+/// Drop local rows under `root` that are not in `seen` (missing files or excluded subfolders).
+fn reconcile_local_under_root(
+    conn: &Connection,
+    root: &Path,
+    kind: &str,
+    seen: &HashSet<String>,
+) -> Result<usize> {
+    let mut statement = conn.prepare(
+        "SELECT id, local_path FROM photos
+         WHERE source='local' AND kind=?1 AND local_path IS NOT NULL",
+    )?;
+    let rows: Vec<(i64, String)> = statement
+        .query_map(params![kind], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut removed = 0;
+    for (photo_id, local_path) in rows {
+        let path = PathBuf::from(&local_path);
+        if !path.starts_with(root) {
+            continue;
+        }
+        if seen.contains(&local_path) {
+            continue;
+        }
+        delete_local_photo(conn, photo_id)?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
+/// Remove any local photo whose file is gone from disk.
+fn prune_missing_local_photos(conn: &Connection) -> Result<usize> {
+    let mut statement = conn.prepare(
+        "SELECT id, local_path FROM photos WHERE source='local' AND local_path IS NOT NULL",
+    )?;
+    let rows: Vec<(i64, String)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut removed = 0;
+    for (photo_id, local_path) in rows {
+        if Path::new(&local_path).is_file() {
+            continue;
+        }
+        delete_local_photo(conn, photo_id)?;
+        removed += 1;
+    }
+    Ok(removed)
 }
 
 pub fn steam_screenshot_folders(configured: &Path) -> Vec<PathBuf> {
@@ -151,39 +207,54 @@ pub fn steam_screenshot_folders(configured: &Path) -> Vec<PathBuf> {
 }
 
 pub fn scan_configured_folder(conn: &Connection, root: &Path, kind: &str) -> Result<usize> {
+    let recursive = kind != "screenshot";
     let roots = if kind == "screenshot" {
         steam_screenshot_folders(root)
     } else {
         vec![root.to_path_buf()]
     };
-    roots
-        .iter()
-        .try_fold(0, |count, root| Ok(count + scan(conn, root, kind)?))
+    let mut count = 0;
+    for scan_root in roots {
+        if !scan_root.exists() {
+            continue;
+        }
+        let seen = scan(conn, &scan_root, kind, recursive)?;
+        count += seen.len();
+        reconcile_local_under_root(conn, &scan_root, kind, &seen)?;
+    }
+    prune_missing_local_photos(conn)?;
+    Ok(count)
 }
 
 pub fn watch_configured_folder(root: PathBuf, kind: String) -> Result<()> {
+    let recursive = kind != "screenshot";
     let roots = if kind == "screenshot" {
         steam_screenshot_folders(&root)
     } else {
         vec![root]
     };
     for root in roots {
-        watch_folder(root, kind.clone())?;
+        watch_folder(root, kind.clone(), recursive)?;
     }
     Ok(())
 }
 
-pub fn watch_folder(root: PathBuf, kind: String) -> Result<()> {
+pub fn watch_folder(root: PathBuf, kind: String, recursive: bool) -> Result<()> {
     let folders = WATCHED_FOLDERS.get_or_init(|| Mutex::new(HashSet::new()));
     if !folders.lock().expect("watch lock").insert(root.clone()) {
         return Ok(());
     }
+    let mode = if recursive {
+        RecursiveMode::Recursive
+    } else {
+        RecursiveMode::NonRecursive
+    };
     std::thread::spawn(move || {
         let (sender, receiver) = std::sync::mpsc::channel();
         let Ok(mut watcher) = RecommendedWatcher::new(sender, notify::Config::default()) else {
             return;
         };
-        if watcher.watch(&root, RecursiveMode::Recursive).is_err() {
+        if watcher.watch(&root, mode).is_err() {
             return;
         }
         while let Ok(result) = receiver.recv() {
@@ -243,5 +314,84 @@ mod tests {
         }
         let folders = steam_screenshot_folders(&root.path().join("userdata"));
         assert_eq!(folders.len(), 2);
+    }
+
+    #[test]
+    fn screenshot_scan_skips_thumbnail_subfolders() {
+        let root = tempfile::tempdir().unwrap();
+        let screenshots = root
+            .path()
+            .join("userdata")
+            .join("111")
+            .join("760")
+            .join("remote")
+            .join(VRCHAT_STEAM_APP_ID)
+            .join("screenshots");
+        let thumbnails = screenshots.join("thumbnails");
+        std::fs::create_dir_all(&thumbnails).unwrap();
+        std::fs::write(screenshots.join("shot.png"), b"png").unwrap();
+        std::fs::write(thumbnails.join("shot.png"), b"png").unwrap();
+
+        let directory = tempfile::tempdir().unwrap();
+        let conn = crate::db::open(&directory.path().join("scan.db")).unwrap();
+        let count =
+            scan_configured_folder(&conn, &root.path().join("userdata"), "screenshot").unwrap();
+        assert_eq!(count, 1);
+        let paths: Vec<String> = conn
+            .prepare("SELECT local_path FROM photos WHERE kind='screenshot'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("shot.png"));
+        assert!(!paths[0].contains("thumbnails"));
+    }
+
+    #[test]
+    fn screenshot_scan_removes_stale_thumbnail_rows_and_missing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let screenshots = root
+            .path()
+            .join("userdata")
+            .join("111")
+            .join("760")
+            .join("remote")
+            .join(VRCHAT_STEAM_APP_ID)
+            .join("screenshots");
+        let thumbnails = screenshots.join("thumbnails");
+        std::fs::create_dir_all(&thumbnails).unwrap();
+        let keep = screenshots.join("keep.png");
+        let stale_thumb = thumbnails.join("old.png");
+        let missing = screenshots.join("missing.png");
+        std::fs::write(&keep, b"png").unwrap();
+        std::fs::write(&stale_thumb, b"png").unwrap();
+
+        let directory = tempfile::tempdir().unwrap();
+        let conn = crate::db::open(&directory.path().join("scan.db")).unwrap();
+        for path in [&keep, &stale_thumb, &missing] {
+            conn.execute(
+                "INSERT INTO photos(source,kind,local_path,file_name,imported_at)
+                 VALUES('local','screenshot',?1,?2,datetime('now'))",
+                params![
+                    path.to_string_lossy().as_ref(),
+                    path.file_name().unwrap().to_string_lossy().as_ref()
+                ],
+            )
+            .unwrap();
+        }
+
+        let count =
+            scan_configured_folder(&conn, &root.path().join("userdata"), "screenshot").unwrap();
+        assert_eq!(count, 1);
+        let paths: Vec<String> = conn
+            .prepare("SELECT local_path FROM photos WHERE kind='screenshot' ORDER BY local_path")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(paths, vec![keep.to_string_lossy().to_string()]);
     }
 }
