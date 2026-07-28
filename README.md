@@ -1,9 +1,21 @@
-﻿# VRChat Photo Manager
-[![Release](https://github.com/axAKAbigSB/vrchat-photo-manager/actions/workflows/release.yml/badge.svg)](https://github.com/axAKAbigSB/vrchat-photo-manager/actions/workflows/release.yml)
+﻿<p align="center">
+  <img src="docs/icon.png" width="128" alt="VRC 相册">
+</p>
+
+<h1 align="center">VRC 相册</h1>
+
+<p align="center"><strong>VRC Album</strong></p>
+
+<p align="center">
+  <a href="https://github.com/axAKAbigSB/vrchat-photo-manager/actions/workflows/release.yml"><img src="https://github.com/axAKAbigSB/vrchat-photo-manager/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://github.com/axAKAbigSB/vrchat-photo-manager/releases/latest"><img src="https://img.shields.io/github/v/release/axAKAbigSB/vrchat-photo-manager?label=release&color=brightgreen" alt="latest release"></a>
+  <img src="https://img.shields.io/github/repo-size/axAKAbigSB/vrchat-photo-manager" alt="repo size">
+  <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="platform">
+</p>
 
 把 VRChat 里拍下的瞬间，重新挂回真正在场的那些人身上。
 
-相册里堆着成千上万张截图时，最难的往往不是「存在哪」，而是「这张到底是和谁」。本应用帮你把本地照片、Steam 截图，以及自己的 Gallery / Prints，和好友一一对上号——改名了也认得出人，解除好友也不会把回忆一起删掉。照片始终留在你的电脑上；关联靠的是每个人稳定的 VRChat ID，不是转瞬即逝的显示名。
+相册里堆着成千上万张截图时，最难的往往不是「存在哪」，而是「这张到底是和谁」。VRC 相册帮你把本地照片、Steam 截图，以及自己的 Gallery / Prints，和好友一一对上号——改名了也认得出人，解除好友也不会把回忆一起删掉。照片始终留在你的电脑上；关联靠的是每个人稳定的 VRChat ID，不是转瞬即逝的显示名。
 
 Windows 桌面端。打开就能整理本地相册；想同步云端好友和相册时，再登录自己的 VRChat 账号即可。
 
@@ -48,11 +60,11 @@ Windows 桌面端。打开就能整理本地相册；想同步云端好友和相
 | 照片索引数据库 | `%AppData%\vrchat-photo-manager\photos.db` |
 | 登录会话 | Windows 系统钥匙串 |
 
-照片文件本身仍在你原来的文件夹里，本应用不会把它们搬走。
+照片文件本身仍在你原来的文件夹里，VRC 相册不会把它们搬走。
 
 ## 隐私
 
-- 使用本应用自己的 VRChat 登录，不借用其它软件的会话
+- 使用 VRC 相册自己的 VRChat 登录，不借用其它软件的会话
 - 登录信息保存在系统钥匙串，不写进普通配置明文
 
 ## 已知限制

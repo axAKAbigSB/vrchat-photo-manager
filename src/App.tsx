@@ -320,7 +320,7 @@ function App() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">V</span><span>VRC Album</span></div>
+        <div className="brand"><img className="brand-mark" src="/brand-icon.png" width={26} height={26} alt="" /><span>VRC 相册</span></div>
         <button className="section-button" onClick={() => setPhotosOpen((open) => !open)} aria-expanded={photosOpen}>
           <Images size={16} /><span>照片</span><ChevronDown className={photosOpen ? 'expanded' : ''} size={15} />
         </button>

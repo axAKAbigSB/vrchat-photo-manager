@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VRC Album",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "identifier": "com.axaka.vrchat-photo-manager",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "VRC Album", "width": 1200, "height": 760, "minWidth": 900, "minHeight": 600 }],
+    "windows": [{ "title": "VRC 相册", "width": 1200, "height": 760, "minWidth": 900, "minHeight": 600 }],
     "security": {
       "csp": null,
       "assetProtocol": {
@@ -23,8 +23,8 @@
     "active": true,
     "targets": ["msi", "nsis"],
     "publisher": "axAKAbigSB",
-    "shortDescription": "按玩家整理本地 VRChat 照片",
-    "longDescription": "同步 VRChat 好友与 Gallery/Prints，并按精选好友整理本地照片。",
+    "shortDescription": "VRC 相册 — 按玩家整理本地 VRChat 照片",
+    "longDescription": "VRC Album（VRC 相册）同步 VRChat 好友与 Gallery/Prints，并按精选好友整理本地照片。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
