@@ -332,11 +332,10 @@ fn resolve_onboarding_completed(conn: &Connection) -> Result<bool> {
         Some(value) => Ok(value == "true"),
         None => {
             // Existing installs already have photos or sync history — skip the wizard.
-            let has_photos: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM photos LIMIT 1)",
-                [],
-                |row| row.get(0),
-            )?;
+            let has_photos: bool =
+                conn.query_row("SELECT EXISTS(SELECT 1 FROM photos LIMIT 1)", [], |row| {
+                    row.get(0)
+                })?;
             let has_sync = setting(conn, "last_sync_at")?.is_some();
             let completed = has_photos || has_sync;
             if completed {
