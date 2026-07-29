@@ -175,7 +175,10 @@ pub fn normalize_steam_folder(configured: &Path) -> PathBuf {
     if configured.join("userdata").is_dir() {
         return configured.to_path_buf();
     }
-    if configured.file_name().is_some_and(|name| name == "userdata") {
+    if configured
+        .file_name()
+        .is_some_and(|name| name == "userdata")
+    {
         if let Some(parent) = configured.parent() {
             return parent.to_path_buf();
         }
