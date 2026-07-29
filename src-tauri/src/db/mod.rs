@@ -45,6 +45,8 @@ pub struct AppSettings {
     pub sync_interval_minutes: i64,
     #[serde(default = "default_true")]
     pub show_self_in_friends: bool,
+    #[serde(default)]
+    pub onboarding_completed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -325,6 +327,26 @@ fn default_album_folder() -> Option<String> {
     dirs::picture_dir().map(|path| path.join("VRChat").to_string_lossy().to_string())
 }
 
+fn resolve_onboarding_completed(conn: &Connection) -> Result<bool> {
+    match setting(conn, "onboarding_completed")? {
+        Some(value) => Ok(value == "true"),
+        None => {
+            // Existing installs already have photos or sync history — skip the wizard.
+            let has_photos: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM photos LIMIT 1)",
+                [],
+                |row| row.get(0),
+            )?;
+            let has_sync = setting(conn, "last_sync_at")?.is_some();
+            let completed = has_photos || has_sync;
+            if completed {
+                set_setting(conn, "onboarding_completed", "true")?;
+            }
+            Ok(completed)
+        }
+    }
+}
+
 pub fn settings(conn: &Connection) -> Result<AppSettings> {
     Ok(AppSettings {
         album_folder: setting(conn, "album_folder")?
@@ -338,6 +360,7 @@ pub fn settings(conn: &Connection) -> Result<AppSettings> {
         show_self_in_friends: setting(conn, "show_self_in_friends")?
             .map(|value| value != "false")
             .unwrap_or(true),
+        onboarding_completed: resolve_onboarding_completed(conn)?,
     })
 }
 
@@ -362,6 +385,15 @@ pub fn save_settings(conn: &Connection, settings: &AppSettings) -> Result<()> {
         conn,
         "show_self_in_friends",
         if settings.show_self_in_friends {
+            "true"
+        } else {
+            "false"
+        },
+    )?;
+    set_setting(
+        conn,
+        "onboarding_completed",
+        if settings.onboarding_completed {
             "true"
         } else {
             "false"

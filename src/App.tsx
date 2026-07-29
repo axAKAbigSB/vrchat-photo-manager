@@ -6,8 +6,9 @@ import {
 } from 'lucide-react'
 import {
   api, type AppSettings, type LastSync, type Photo, type Player, type SyncStatus,
-  type VrchatSessionStatus,
+  type VrchatSessionStatus, normalizeSteamFolderPath,
 } from './lib/api'
+import { OnboardingWizard } from './OnboardingWizard'
 import './App.css'
 
 const avatarFallback = 'https://api.dicebear.com/9.x/shapes/svg?seed='
@@ -66,7 +67,8 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(false)
   const [friendManagerOpen, setFriendManagerOpen] = useState(false)
   const [friendQuery, setFriendQuery] = useState('')
-  const [settings, setSettings] = useState<AppSettings>({ syncIntervalMinutes: 15, showSelfInFriends: true })
+  const [settings, setSettings] = useState<AppSettings>({ syncIntervalMinutes: 15, showSelfInFriends: true, onboardingCompleted: true })
+  const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [twoFactorCode, setTwoFactorCode] = useState('')
@@ -146,7 +148,10 @@ function App() {
   useEffect(() => {
     void Promise.all([
       refreshPlayers(),
-      api.getSettings().then(setSettings),
+      api.getSettings().then((next) => {
+        setSettings(next)
+        if (!next.onboardingCompleted) setOnboardingOpen(true)
+      }),
       api.vrchatSessionStatus().then(async (status) => {
         setSessionStatus(status)
         if (status.status === 'active') await refreshPlayers()
@@ -204,13 +209,38 @@ function App() {
   const saveAndScan = async () => {
     try {
       await api.saveSettings(settings)
+      const next = await api.getSettings()
+      setSettings(next)
       let count = 0
-      if (settings.albumFolder) count += await api.scanPhotoFolder(settings.albumFolder, 'album')
-      if (settings.steamScreenshotFolder) count += await api.scanPhotoFolder(settings.steamScreenshotFolder, 'screenshot')
+      if (next.albumFolder) count += await api.scanPhotoFolder(next.albumFolder, 'album')
+      if (next.steamScreenshotFolder) count += await api.scanPhotoFolder(next.steamScreenshotFolder, 'screenshot')
       setNotice(`设置已保存，共索引 ${count} 张照片。`)
       await refreshPhotos()
     } catch (error) {
       setNotice(errorMessage(error, '保存设置失败'))
+    }
+  }
+  const finishOnboarding = async () => {
+    const next = { ...settings, onboardingCompleted: true }
+    try {
+      await api.saveSettings(next)
+      setSettings(next)
+      setOnboardingOpen(false)
+    } catch (error) {
+      setNotice(errorMessage(error, '保存引导状态失败'))
+    }
+  }
+  const reopenOnboarding = async () => {
+    const next = { ...settings, onboardingCompleted: false }
+    try {
+      await api.saveSettings(next)
+      setSettings(next)
+      setSettingsOpen(false)
+      setLoginOpen(false)
+      setFriendManagerOpen(false)
+      setOnboardingOpen(true)
+    } catch (error) {
+      setNotice(errorMessage(error, '无法重新打开新手引导'))
     }
   }
   const login = async () => {
@@ -413,7 +443,6 @@ function App() {
                 : sessionStatus?.status === 'expired' ? '登录已过期' : '未登录'}</span>
               <button onClick={() => setLoginOpen(true)}>{sessionStatus?.status === 'active' ? '账号' : '登录'}</button>
             </div>
-            <button onClick={() => setSettingsOpen(true)}><FolderOpen size={15} />导入目录</button>
             <button className="primary" onClick={() => void sync()} disabled={syncing}><Cloud size={15} />{syncing ? '同步中…' : '立即同步'}</button>
           </div>
         </header>
@@ -483,7 +512,7 @@ function App() {
         </section>
       </div>}
 
-      {settingsOpen && <div className="modal-backdrop" onMouseDown={() => setSettingsOpen(false)}>
+      {settingsOpen && !onboardingOpen && <div className="modal-backdrop" onMouseDown={() => setSettingsOpen(false)}>
         <section className="settings-modal" onMouseDown={(event) => event.stopPropagation()}>
           <div className="modal-heading"><h2>设置</h2><button onClick={() => setSettingsOpen(false)}>×</button></div>
           <h3>照片目录</h3>
@@ -491,18 +520,19 @@ function App() {
             const path = await api.chooseDirectory(settings.albumFolder)
             if (path) setSettings((current) => ({ ...current, albumFolder: path }))
           }}>选择…</button></span></label>
-          <label>Steam 目录<span className="directory-field"><input value={settings.steamScreenshotFolder ?? ''} onChange={(event) => setSettings({ ...settings, steamScreenshotFolder: event.target.value })} placeholder="请选择 Steam、userdata 或 screenshots 目录" /><button type="button" onClick={async () => {
+          <label>Steam 安装目录<span className="directory-field"><input value={settings.steamScreenshotFolder ?? ''} onChange={(event) => setSettings({ ...settings, steamScreenshotFolder: event.target.value })} placeholder="例如 D:\Steam 或 C:\Program Files (x86)\Steam" /><button type="button" onClick={async () => {
             const path = await api.chooseDirectory(settings.steamScreenshotFolder)
-            if (path) setSettings((current) => ({ ...current, steamScreenshotFolder: path }))
+            if (path) setSettings((current) => ({ ...current, steamScreenshotFolder: normalizeSteamFolderPath(path) }))
           }}>选择…</button></span></label>
-          <p className="help">相册会递归扫描 YYYY-MM 等子目录。Steam 会自动识别 userdata，并只扫描各用户 VRChat（App 438100）截图目录下的文件（不含 thumbnails 等子文件夹）。</p>
+          <p className="help">相册会递归扫描 YYYY-MM 等子目录。Steam 请选择安装根目录（含 userdata 的那一层）；保存后会自动找到各账号下 VRChat（App 438100）的截图文件夹，不含 thumbnails。</p>
           <label>同步间隔（分钟）<input type="number" min="5" value={settings.syncIntervalMinutes} onChange={(event) => setSettings({ ...settings, syncIntervalMinutes: Number(event.target.value) })} /></label>
           <label className="setting-toggle"><span>在好友栏顶部显示自己</span><input type="checkbox" checked={settings.showSelfInFriends} onChange={(event) => setSettings({ ...settings, showSelfInFriends: event.target.checked })} /></label>
           <button className="primary wide" onClick={() => void saveAndScan()}><FolderOpen size={16} />保存并扫描目录</button>
+          <button className="text-button" type="button" onClick={() => void reopenOnboarding()}>重新打开新手引导</button>
         </section>
       </div>}
 
-      {loginOpen && <div className="modal-backdrop" onMouseDown={() => setLoginOpen(false)}>
+      {loginOpen && !onboardingOpen && <div className="modal-backdrop" onMouseDown={() => setLoginOpen(false)}>
         <section className="settings-modal login-modal" onMouseDown={(event) => event.stopPropagation()}>
           <div className="modal-heading"><h2>VRChat 登录</h2><button onClick={() => setLoginOpen(false)}>×</button></div>
           {sessionStatus?.status === 'active' && !twoFactorMethods.length ? <div className="auth-card">
@@ -536,7 +566,7 @@ function App() {
         </section>
       </div>}
 
-      {friendManagerOpen && <div className="modal-backdrop" onMouseDown={() => setFriendManagerOpen(false)}>
+      {friendManagerOpen && !onboardingOpen && <div className="modal-backdrop" onMouseDown={() => setFriendManagerOpen(false)}>
         <section className="settings-modal friend-manager-modal" onMouseDown={(event) => event.stopPropagation()}>
           <div className="modal-heading"><div><h2>管理好友</h2><small>从 VRChat 好友中精选显示在左栏的玩家；解除好友不会自动取消精选</small></div><button onClick={() => setFriendManagerOpen(false)}>×</button></div>
           <label className="friend-manager-search"><Search size={15} /><input value={friendQuery} onChange={(event) => setFriendQuery(event.target.value)} placeholder="搜索备注、昵称、曾用名或 ID" autoFocus /></label>
@@ -576,6 +606,35 @@ function App() {
           </footer>
         </section>
       </div>}
+
+      {onboardingOpen && (
+        <OnboardingWizard
+          settings={settings}
+          onSettingsChange={setSettings}
+          sessionStatus={sessionStatus}
+          username={username}
+          password={password}
+          twoFactorCode={twoFactorCode}
+          twoFactorMethods={twoFactorMethods}
+          loggingIn={loggingIn}
+          authFeedback={authFeedback}
+          onUsernameChange={setUsername}
+          onPasswordChange={setPassword}
+          onTwoFactorCodeChange={setTwoFactorCode}
+          onLogin={() => void login()}
+          onVerifyTwoFactor={() => void verifyTwoFactor()}
+          syncStatus={syncStatus}
+          lastSync={lastSync}
+          onSync={() => void sync()}
+          managedPlayers={managedPlayers}
+          friendQuery={friendQuery}
+          onFriendQueryChange={setFriendQuery}
+          onToggleFriend={(player) => void toggleFriend(player)}
+          friendStatusLabel={friendStatusLabel}
+          onComplete={() => void finishOnboarding()}
+          onSkip={() => void finishOnboarding()}
+        />
+      )}
     </main>
   )
 }

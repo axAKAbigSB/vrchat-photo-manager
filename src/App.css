@@ -282,3 +282,60 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .sync-details b { overflow: hidden; color: #bbb; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .sync-details small { color: #707070; font-size: 9px; }
 @media (max-width: 900px) { .sync-summary { display: none; } }
+
+.onboarding-backdrop { z-index: 40; }
+.onboarding-modal {
+  width: min(480px, 100%);
+  max-height: min(720px, 92vh);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+.onboarding-modal .modal-heading > div { display: grid; gap: 3px; }
+.onboarding-modal .modal-heading small { color: #777; font-size: 10px; }
+.onboarding-steps { display: flex; gap: 6px; padding: 2px 0 4px; }
+.onboarding-step-dot {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: #2a2a2a;
+}
+.onboarding-step-dot.done { background: #5a5a5a; }
+.onboarding-step-dot.active { background: #e8e8e8; }
+.onboarding-body {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 11px;
+}
+.onboarding-body > svg { color: #cfcfcf; }
+.onboarding-app-icon {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  border-radius: 14px;
+}
+.onboarding-welcome { justify-items: start; }
+.onboarding-body h3 { margin: 0; color: #eee; font-size: 15px; font-weight: 550; }
+.onboarding-body p { margin: 0; color: #b0b0b0; font-size: 12px; line-height: 1.55; }
+.onboarding-friends { grid-template-rows: auto auto auto minmax(0, 1fr); }
+.onboarding-friend-list { min-height: 180px; max-height: 280px; }
+.onboarding-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #303030;
+}
+.onboarding-footer-actions { display: flex; gap: 8px; margin-left: auto; }
+.onboarding-footer .primary,
+.onboarding-footer .secondary {
+  min-height: 34px;
+  padding: 7px 14px;
+  border: 1px solid #404040;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.onboarding-footer .primary:disabled,
+.onboarding-footer .secondary:disabled { opacity: .4; }
+.onboarding-footer .wide { width: 100%; justify-content: center; }

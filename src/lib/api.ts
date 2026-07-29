@@ -39,6 +39,7 @@ export interface AppSettings {
   steamScreenshotFolder?: string
   syncIntervalMinutes: number
   showSelfInFriends: boolean
+  onboardingCompleted: boolean
 }
 
 export interface LoginResult {
@@ -72,6 +73,19 @@ export interface LastSync {
   at?: string
   message?: string
   success?: boolean
+}
+
+/** Collapse userdata / VRChat screenshot paths to the Steam install root for display. */
+export function normalizeSteamFolderPath(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed) return trimmed
+  const parts = trimmed.replaceAll('/', '\\').split('\\').filter(Boolean)
+  const userdataIndex = parts.findIndex((part) => part.toLowerCase() === 'userdata')
+  if (userdataIndex > 0) {
+    const root = parts.slice(0, userdataIndex).join('\\')
+    return /^[A-Za-z]:/.test(root) ? root : `\\${root}`
+  }
+  return trimmed
 }
 
 const isTauri = '__TAURI_INTERNALS__' in window
@@ -129,7 +143,7 @@ export const api = {
   async getSettings(): Promise<AppSettings> {
     return isTauri
       ? invoke<AppSettings>('get_settings')
-      : { albumFolder: 'D:\\VRChatPhotos', syncIntervalMinutes: 15, showSelfInFriends: true }
+      : { albumFolder: 'D:\\VRChatPhotos', syncIntervalMinutes: 15, showSelfInFriends: true, onboardingCompleted: true }
   },
   async saveSettings(settings: AppSettings): Promise<void> {
     if (isTauri) await invoke('save_settings', { settings })

@@ -3,7 +3,7 @@ mod photos;
 mod sync;
 mod vrchat;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
@@ -78,11 +78,26 @@ fn scan_photo_folder(path: String, kind: String) -> Result<usize, String> {
 
 #[tauri::command]
 fn get_settings() -> Result<db::AppSettings, String> {
-    db::settings(&connection()?).map_err(|error| error.to_string())
+    let mut settings = db::settings(&connection()?).map_err(|error| error.to_string())?;
+    if let Some(steam) = settings.steam_screenshot_folder.take() {
+        settings.steam_screenshot_folder = Some(
+            photos::normalize_steam_folder(Path::new(&steam))
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
-fn save_settings(settings: db::AppSettings) -> Result<(), String> {
+fn save_settings(mut settings: db::AppSettings) -> Result<(), String> {
+    if let Some(steam) = settings.steam_screenshot_folder.take() {
+        settings.steam_screenshot_folder = Some(
+            photos::normalize_steam_folder(Path::new(&steam))
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
     let conn = connection()?;
     db::save_settings(&conn, &settings).map_err(|error| error.to_string())?;
     for (path, kind) in [

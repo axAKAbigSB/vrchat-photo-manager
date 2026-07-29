@@ -170,12 +170,34 @@ fn prune_missing_local_photos(conn: &Connection) -> Result<usize> {
     Ok(removed)
 }
 
+pub fn normalize_steam_folder(configured: &Path) -> PathBuf {
+    // Prefer the Steam install root when the user picked userdata or a deeper path.
+    if configured.join("userdata").is_dir() {
+        return configured.to_path_buf();
+    }
+    if configured.file_name().is_some_and(|name| name == "userdata") {
+        if let Some(parent) = configured.parent() {
+            return parent.to_path_buf();
+        }
+    }
+    if let Some(userdata) = configured
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "userdata"))
+    {
+        if let Some(parent) = userdata.parent() {
+            return parent.to_path_buf();
+        }
+    }
+    configured.to_path_buf()
+}
+
 pub fn steam_screenshot_folders(configured: &Path) -> Vec<PathBuf> {
+    let configured = normalize_steam_folder(configured);
     let userdata = if configured
         .file_name()
         .is_some_and(|name| name == "userdata")
     {
-        Some(configured.to_path_buf())
+        Some(configured.clone())
     } else if configured.join("userdata").is_dir() {
         Some(configured.join("userdata"))
     } else {
@@ -187,7 +209,7 @@ pub fn steam_screenshot_folders(configured: &Path) -> Vec<PathBuf> {
     let Some(userdata) = userdata else {
         return configured
             .exists()
-            .then(|| configured.to_path_buf())
+            .then_some(configured)
             .into_iter()
             .collect();
     };
@@ -317,6 +339,43 @@ mod tests {
         }
         let folders = steam_screenshot_folders(&root.path().join("userdata"));
         assert_eq!(folders.len(), 2);
+    }
+
+    #[test]
+    fn discovers_vrchat_screenshots_from_steam_root() {
+        let root = tempfile::tempdir().unwrap();
+        let screenshots = root
+            .path()
+            .join("userdata")
+            .join("111")
+            .join("760")
+            .join("remote")
+            .join(VRCHAT_STEAM_APP_ID)
+            .join("screenshots");
+        std::fs::create_dir_all(&screenshots).unwrap();
+
+        let folders = steam_screenshot_folders(root.path());
+        assert_eq!(folders, vec![screenshots]);
+    }
+
+    #[test]
+    fn normalizes_deep_steam_paths_to_install_root() {
+        let root = tempfile::tempdir().unwrap();
+        let deep = root
+            .path()
+            .join("userdata")
+            .join("111")
+            .join("760")
+            .join("remote")
+            .join(VRCHAT_STEAM_APP_ID);
+        std::fs::create_dir_all(&deep).unwrap();
+
+        assert_eq!(normalize_steam_folder(root.path()), root.path());
+        assert_eq!(
+            normalize_steam_folder(&root.path().join("userdata")),
+            root.path()
+        );
+        assert_eq!(normalize_steam_folder(&deep), root.path());
     }
 
     #[test]
