@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   Camera, ChevronDown, ChevronLeft, ChevronRight, Cloud, FolderOpen,
   Image, Images, LoaderCircle, LogOut, Maximize2, Search, Settings,
@@ -49,6 +49,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<string>()
   const [selectedPhotos, setSelectedPhotos] = useState<Set<number>>(new Set())
   const [selectionMode, setSelectionMode] = useState(false)
+  const selectionAnchorRef = useRef<number | null>(null)
   const [associationPreset, setAssociationPreset] = useState<Set<string>>(new Set())
   const [associationPhotoIds, setAssociationPhotoIds] = useState<number[]>()
   const [associationFriends, setAssociationFriends] = useState<Set<string>>(new Set())
@@ -186,18 +187,21 @@ function App() {
   }, [refreshPhotos])
   useEffect(() => { void refreshPhotos() }, [refreshPhotos])
 
+  const clearPhotoSelection = () => {
+    setSelectedPhotos(new Set())
+    setSelectionMode(false)
+    selectionAnchorRef.current = null
+  }
   const choosePhotoView = (next: Exclude<View, 'player'>) => {
     setView(next)
     setSelectedId(undefined)
     setPhotosOpen(true)
-    setSelectedPhotos(new Set())
-    setSelectionMode(false)
+    clearPhotoSelection()
   }
   const choosePlayer = (player: Player) => {
     setSelectedId(player.userId)
     setView('player')
-    setSelectedPhotos(new Set())
-    setSelectionMode(false)
+    clearPhotoSelection()
   }
   const sync = async () => {
     try {
@@ -284,6 +288,39 @@ function App() {
     if (next.has(id)) next.delete(id); else next.add(id)
     return next
   })
+  const selectPhotoRange = (from: number, to: number) => {
+    const start = Math.min(from, to)
+    const end = Math.max(from, to)
+    setSelectionMode(true)
+    setSelectedPhotos((current) => {
+      const next = new Set(current)
+      for (let i = start; i <= end; i++) {
+        const photo = visiblePhotos[i]
+        if (photo) next.add(photo.id)
+      }
+      return next
+    })
+  }
+  const handlePhotoSelect = (index: number, id: number, shiftKey: boolean) => {
+    if (shiftKey && selectionAnchorRef.current !== null) {
+      selectPhotoRange(selectionAnchorRef.current, index)
+      return
+    }
+    togglePhoto(id)
+    selectionAnchorRef.current = index
+  }
+  const handlePhotoPreviewClick = (event: MouseEvent, index: number, id: number) => {
+    if (event.shiftKey) {
+      event.preventDefault()
+      handlePhotoSelect(index, id, true)
+      return
+    }
+    if (selectionMode) {
+      handlePhotoSelect(index, id, false)
+      return
+    }
+    setPreviewIndex(index)
+  }
   const toggleFriend = async (player: Player) => {
     const selected = !player.isFriend
     await api.setFriend(player.userId, selected)
@@ -331,8 +368,7 @@ function App() {
       setAssociationPhotoIds(undefined)
       setAssociationFriends(new Set())
       setAssociationPreset(new Set())
-      setSelectedPhotos(new Set())
-      setSelectionMode(false)
+      clearPhotoSelection()
       await Promise.all([refreshPlayers(), refreshPhotos()])
     } catch (error) {
       setNotice(errorMessage(error, '关联好友失败'))
@@ -470,19 +506,21 @@ function App() {
           {associationPreset.size > 0 && <small>目标：{[...associationPreset].map((id) => players.find((player) => player.userId === id)?.displayName ?? id).join('、')}</small>}
           <button className="selection-action" disabled={!selectedPhotos.size} onClick={() => openAssociation([...selectedPhotos])}><Users size={13} />关联好友…</button>
           <button onClick={() => {
-            setSelectedPhotos(new Set())
-            setSelectionMode(false)
+            clearPhotoSelection()
             setAssociationPreset(new Set())
           }}>退出多选</button>
         </div>}
         <section className={`photo-grid ${selectionMode ? 'selection-mode' : ''}`}>
           {visiblePhotos.map((photo, index) => <article className={`photo-card ${selectedPhotos.has(photo.id) ? 'selected' : ''}`} key={photo.id}>
-            <button className="photo-preview" onClick={() => selectionMode ? togglePhoto(photo.id) : setPreviewIndex(index)}>
+            <button className="photo-preview" onClick={(event) => handlePhotoPreviewClick(event, index, photo.id)}>
               <img src={photo.thumbnailPath || photo.remoteUrl || photo.localPath} alt="" loading="lazy" />
               <Maximize2 className="zoom-icon" size={17} />
             </button>
             <label className="photo-select" onClick={(event) => event.stopPropagation()}>
-              <input type="checkbox" checked={selectedPhotos.has(photo.id)} onChange={() => togglePhoto(photo.id)} />
+              <input type="checkbox" checked={selectedPhotos.has(photo.id)} onClick={(event) => {
+                event.preventDefault()
+                handlePhotoSelect(index, photo.id, event.shiftKey)
+              }} onChange={() => undefined} />
             </label>
             <span className="photo-info"><small>{photo.kind === 'screenshot' ? 'Steam 截图' : photo.source === 'vrchat_gallery' ? 'VRChat 相册' : photo.source === 'vrchat_print' ? 'VRChat 拍立得' : '相册'}{photo.people.length ? ` · ${photo.people.length} 位玩家` : ' · 未关联'}</small></span>
           </article>)}
