@@ -517,10 +517,10 @@ function App() {
               <Maximize2 className="zoom-icon" size={17} />
             </button>
             <label className="photo-select" onClick={(event) => event.stopPropagation()}>
-              <input type="checkbox" checked={selectedPhotos.has(photo.id)} onClick={(event) => {
-                event.preventDefault()
-                handlePhotoSelect(index, photo.id, event.shiftKey)
-              }} onChange={() => undefined} />
+              <input type="checkbox" checked={selectedPhotos.has(photo.id)} onChange={(event) => {
+                const shiftKey = event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey
+                handlePhotoSelect(index, photo.id, shiftKey)
+              }} />
             </label>
             <span className="photo-info"><small>{photo.kind === 'screenshot' ? 'Steam 截图' : photo.source === 'vrchat_gallery' ? 'VRChat 相册' : photo.source === 'vrchat_print' ? 'VRChat 拍立得' : '相册'}{photo.people.length ? ` · ${photo.people.length} 位玩家` : ' · 未关联'}</small></span>
           </article>)}
